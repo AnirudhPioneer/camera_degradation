@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Camera Degradation Detection — Project Overview</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #22263a;
+    --border: #2e3350;
+    --accent: #4f8ef7;
+    --accent2: #7c5cfc;
+    --green: #3ecf8e;
+    --yellow: #f5c842;
+    --red: #f0574b;
+    --orange: #f5844b;
+    --purple: #a78bfa;
+    --text: #e2e8f0;
+    --muted: #8892aa;
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    padding: 2rem;
+  }
+
+  h1 { font-size: 2rem; font-weight: 700; color: white; }
+  h2 { font-size: 1.3rem; font-weight: 600; color: var(--accent); margin-bottom: 1rem; letter-spacing: 0.03em; }
+  h3 { font-size: 1rem; font-weight: 600; color: var(--text); margin-bottom: 0.5rem; }
+
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .badge {
+    background: var(--accent2);
+    color: white;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.75rem;
+    border-radius: 999px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 1.05rem;
+    margin-bottom: 2rem;
+  }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.25rem; margin-bottom: 1.25rem; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.25rem; margin-bottom: 1.25rem; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+  }
+  .card.accent-left { border-left: 3px solid var(--accent); }
+  .card.green-left  { border-left: 3px solid var(--green); }
+  .card.red-left    { border-left: 3px solid var(--red); }
+  .card.yellow-left { border-left: 3px solid var(--yellow); }
+  .card.purple-left { border-left: 3px solid var(--purple); }
+
+  .section { margin-bottom: 2.5rem; }
+
+  code, .mono {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    background: var(--surface2);
+    padding: 0.1em 0.4em;
+    border-radius: 4px;
+    color: #a5d6ff;
+  }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    overflow-x: auto;
+    line-height: 1.7;
+    color: #c9d1d9;
+  }
+
+  /* Pipeline diagram */
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+  }
+  .pipe-step {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1.2rem;
+    position: relative;
+  }
+  .pipe-step .step-title { font-weight: 600; color: var(--accent); font-size: 0.95rem; }
+  .pipe-step .step-desc  { color: var(--muted); font-size: 0.85rem; margin-top: 0.2rem; }
+  .pipe-step .step-outputs { margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .arrow {
+    text-align: center;
+    color: var(--muted);
+    font-size: 1.2rem;
+    padding: 0.15rem 0;
+    line-height: 1;
+  }
+  .feature-pill {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid;
+    font-weight: 500;
+  }
+  .pill-blue   { background: #1e3a5f; border-color: var(--accent); color: #93c5fd; }
+  .pill-green  { background: #14402e; border-color: var(--green); color: #6ee7b7; }
+  .pill-yellow { background: #3d3010; border-color: var(--yellow); color: #fde68a; }
+  .pill-purple { background: #2d2050; border-color: var(--purple); color: #c4b5fd; }
+
+  /* Decision tree */
+  .tree { display: flex; flex-direction: column; gap: 0.5rem; }
+  .tree-node {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+  }
+  .tree-number {
+    min-width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+  }
+  .tree-label {
+    font-weight: 700;
+    font-size: 0.95rem;
+    min-width: 6.5rem;
+  }
+  .tree-condition { color: var(--muted); font-size: 0.85rem; font-family: var(--mono); }
+
+  /* Features table */
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th {
+    text-align: left;
+    padding: 0.6rem 0.8rem;
+    background: var(--surface2);
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 0.55rem 0.8rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1e2235; }
+
+  /* Constraint pills */
+  .constraint-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+  .constraint-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+  }
+  .constraint-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 0.05rem; }
+  .constraint-label { font-size: 0.82rem; color: var(--muted); display: block; }
+  .constraint-value { font-size: 0.9rem; font-weight: 600; color: var(--text); }
+
+  /* Todo list */
+  .phase-block { margin-bottom: 1.25rem; }
+  .phase-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 0.6rem;
+  }
+  .todo-list { display: flex; flex-direction: column; gap: 0.35rem; }
+  .todo-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.88rem;
+  }
+  .todo-check {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--border);
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  /* Output types */
+  .output-grid { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .output-chip {
+    padding: 0.4rem 1rem;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 0.85rem;
+    border: 2px solid;
+  }
+  .chip-clean        { background: #14402e; border-color: var(--green); color: #6ee7b7; }
+  .chip-fog          { background: #1e3a5f; border-color: #60a5fa; color: #93c5fd; }
+  .chip-frost        { background: #2d2050; border-color: var(--purple); color: #c4b5fd; }
+  .chip-dirt         { background: #3d2010; border-color: var(--orange); color: #fdba74; }
+  .chip-obstruction  { background: #3d1010; border-color: var(--red); color: #fca5a5; }
+  .chip-unknown      { background: #2a2a2a; border-color: var(--muted); color: var(--muted); }
+
+  .divider { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+
+  @media (max-width: 900px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .constraint-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════════ -->
+<div class="header">
+  <h1>Camera Degradation Detection</h1>
+  <span class="badge">Embedded C99</span>
+</div>
+<p class="subtitle">
+  Real-time degradation watchdog for an externally mounted automotive camera.<br>
+  ARM Cortex-M0 · No FPU · No dynamic memory · &lt;2KB RAM · Integer arithmetic only
+</p>
+
+<!-- ═══════════════════════════════════════════════
+     WHAT IT DOES + OUTPUTS
+════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>What This Module Does</h2>
+  <div class="grid-2">
+    <div class="card accent-left">
+      <h3>Purpose</h3>
+      <p style="color:var(--muted); font-size:0.9rem; margin-top:0.4rem;">
+        Runs 10 times per second on a 30fps camera stream (every 3rd frame). Examines the image and raises an alarm when the lens is unreliable due to environmental conditions.<br><br>
+        This is <strong>detection only</strong> — no image correction, no dehazing, no filtering.
+      </p>
+    </div>
+    <div class="card green-left">
+      <h3>Classification Outputs</h3>
+      <div class="output-grid" style="margin-top:0.7rem;">
+        <span class="output-chip chip-clean">CLEAN</span>
+        <span class="output-chip chip-fog">FOG</span>
+        <span class="output-chip chip-frost">FROST</span>
+        <span class="output-chip chip-dirt">DIRT</span>
+        <span class="output-chip chip-obstruction">OBSTRUCTION</span>
+        <span class="output-chip chip-unknown">UNKNOWN</span>
+      </div>
+      <p style="color:var(--muted); font-size:0.82rem; margin-top:0.8rem;">
+        Confidence: <code>uint8_t</code> (0–255)<br>
+        Hysteresis: 5 frames to enter degraded · 15 frames to clear
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     HARDWARE CONSTRAINTS
+════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>Hardware Constraints — These Are Absolute</h2>
+  <div class="constraint-grid">
+    <div class="constraint-item">
+      <span class="constraint-icon">⚡</span>
+      <div>
+        <span class="constraint-label">Target MCU</span>
+        <span class="constraint-value">ARM Cortex-M0</span>
+      </div>
+    </div>
+    <div class="constraint-item">
+      <span class="constraint-icon">🧠</span>
+      <div>
+        <span class="constraint-label">Total RAM Budget</span>
+        <span class="constraint-value">&lt; 2 KB</span>
+      </div>
+    </div>
+    <div class="constraint-item">
+      <span class="constraint-icon">🔢</span>
+      <div>
+        <span class="constraint-label">Arithmetic</span>
+        <span class="constraint-value">Integer only (no FPU)</span>
+      </div>
+    </div>
+    <div class="constraint-item">
+      <span class="constraint-icon">🚫</span>
+      <div>
+        <span class="constraint-label">Memory Allocation</span>
+        <span class="constraint-value">Static only (no malloc)</span>
+      </div>
+    </div>
+    <div class="constraint-item">
+      <span class="constraint-icon">📚</span>
+      <div>
+        <span class="constraint-label">Standard Library</span>
+        <span class="constraint-value">stdint.h + string.h only</span>
+      </div>
+    </div>
+    <div class="constraint-item">
+      <span class="constraint-icon">⏱️</span>
+      <div>
+        <span class="constraint-label">Detection Rate</span>
+        <span class="constraint-value">10 Hz (every 3rd frame)</span>
+      </div>
+    </div>
+    <div class="constraint-item">
+      <span class="constraint-icon">📦</span>
+      <div>
+        <span class="constraint-label">Language</span>
+        <span class="constraint-value">C99, pure portable</span>
+      </div>
+    </div>
+    <div class="constraint-item">
+      <span class="constraint-icon">🔀</span>
+      <div>
+        <span class="constraint-label">No #ifdef</span>
+        <span class="constraint-value">Same code for PC + ARM</span>
+      </div>
+    </div>
+    <div class="constraint-item">
+      <span class="constraint-icon">❌</span>
+      <div>
+        <span class="constraint-label">Banned Forever</span>
+        <span class="constraint-value">float, double, malloc, assert, printf (in core)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     DETECTION PIPELINE
+════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>Detection Pipeline</h2>
+  <div class="grid-2">
+    <div>
+      <div class="pipeline">
+
+        <div class="pipe-step">
+          <div class="step-title">1 · Input Frame</div>
+          <div class="step-desc">Raw uint8 grayscale, row-major, W×H bytes. No header, no format. Every 3rd frame is processed.</div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="pipe-step">
+          <div class="step-title">2 · Single-Pass Feature Extraction (stride 4)</div>
+          <div class="step-desc">One pass over the image, sampling every 4th pixel in x and y. All 8 features computed simultaneously — no second pass.</div>
+          <div class="step-outputs">
+            <span class="feature-pill pill-blue">laplacian_var</span>
+            <span class="feature-pill pill-blue">global_contrast</span>
+            <span class="feature-pill pill-blue">histogram_spread</span>
+            <span class="feature-pill pill-blue">global_mean</span>
+            <span class="feature-pill pill-green">occlusion_score</span>
+            <span class="feature-pill pill-green">obstruction_score</span>
+            <span class="feature-pill pill-green">cell_mean_variance</span>
+            <span class="feature-pill pill-yellow">temporal_mad</span>
+          </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="pipe-step">
+          <div class="step-title">3 · Dual-Timescale Baseline EMA</div>
+          <div class="step-desc">
+            Learns what "normal" looks like for this specific camera and scene.<br>
+            Fast EMA (α = 1/16) · Slow EMA (α = 1/256)<br>
+            <span style="color:var(--yellow);">60-frame warmup</span> — alarms suppressed until baseline is stable.
+          </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="pipe-step">
+          <div class="step-title">4 · Ratio Computation</div>
+          <div class="step-desc">
+            Each feature is compared to its baseline:<br>
+            <code style="font-size:0.78rem;">ratio = (current × 128) / (baseline + 1)</code><br>
+            128 = no change · &lt;128 = dropped · &gt;128 = rose
+          </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="pipe-step">
+          <div class="step-title">5 · Decision Tree Classifier</div>
+          <div class="step-desc">Hard-coded priority order resolves ambiguities between types. See diagram →</div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="pipe-step">
+          <div class="step-title">6 · Hysteresis State Machine</div>
+          <div class="step-desc">
+            Prevents flickering between states.<br>
+            Enter degraded: <span style="color:var(--red);">5 consecutive frames</span><br>
+            Clear to clean: <span style="color:var(--green);">15 consecutive frames</span>
+          </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <div class="pipe-step" style="border-color:var(--accent); background:#1a2540;">
+          <div class="step-title" style="color:white;">Output: DegradationResult</div>
+          <div class="step-desc">classification · confidence (uint8) · feature snapshot</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Decision Tree -->
+    <div>
+      <h3 style="margin-bottom:0.75rem; color:var(--muted); font-size:0.85rem; text-transform:uppercase; letter-spacing:0.07em;">Classification Decision Tree</h3>
+      <div class="tree">
+
+        <div class="tree-node">
+          <div class="tree-number" style="background:#3d2010; color:#fdba74;">1</div>
+          <div>
+            <div class="tree-label" style="color:#fdba74;">DIRT</div>
+            <div class="tree-condition">occlusion_score HIGH<br>+ cell_mean_variance HIGH</div>
+            <div style="color:var(--muted); font-size:0.78rem; margin-top:0.3rem;">Dark blobs present + frame is spatially non-uniform</div>
+          </div>
+        </div>
+
+        <div class="tree-node">
+          <div class="tree-number" style="background:#3d1010; color:#fca5a5;">2</div>
+          <div>
+            <div class="tree-label" style="color:#fca5a5;">OBSTRUCTION</div>
+            <div class="tree-condition">obstruction_score HIGH<br>+ cell_mean_variance HIGH<br>+ occlusion_score LOW</div>
+            <div style="color:var(--muted); font-size:0.78rem; margin-top:0.3rem;">Any-brightness blob (ice, tape) — not dark mud</div>
+          </div>
+        </div>
+
+        <div class="tree-node">
+          <div class="tree-number" style="background:#2d2050; color:#c4b5fd;">3</div>
+          <div>
+            <div class="tree-label" style="color:#c4b5fd;">FROST</div>
+            <div class="tree-condition">laplacian_var LOW + global_mean HIGH<br>+ histogram_spread VERY LOW<br>+ cell_mean_variance LOW</div>
+            <div style="color:var(--muted); font-size:0.78rem; margin-top:0.3rem;">Bright veiling + uniform blur + histogram skewed high</div>
+          </div>
+        </div>
+
+        <div class="tree-node">
+          <div class="tree-number" style="background:#1e3a5f; color:#93c5fd;">4</div>
+          <div>
+            <div class="tree-label" style="color:#93c5fd;">FOG</div>
+            <div class="tree-condition">global_contrast LOW + laplacian_var LOW<br>+ global_mean NEAR BASELINE<br>+ cell_mean_variance LOW</div>
+            <div style="color:var(--muted); font-size:0.78rem; margin-top:0.3rem;">Global contrast reduction + uniform across frame</div>
+          </div>
+        </div>
+
+        <div class="tree-node">
+          <div class="tree-number" style="background:#14402e; color:#6ee7b7;">5</div>
+          <div>
+            <div class="tree-label" style="color:#6ee7b7;">CLEAN</div>
+            <div class="tree-condition">None of the above triggered</div>
+          </div>
+        </div>
+
+        <div class="tree-node">
+          <div class="tree-number" style="background:#2a2a2a; color:#8892aa;">6</div>
+          <div>
+            <div class="tree-label" style="color:#8892aa;">UNKNOWN</div>
+            <div class="tree-condition">Contradictory feature combination</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Key discriminator table -->
+      <div style="margin-top:1.25rem;">
+        <h3 style="margin-bottom:0.6rem; color:var(--muted); font-size:0.85rem; text-transform:uppercase; letter-spacing:0.07em;">Key Discriminating Features</h3>
+        <div class="card" style="padding:0; overflow:hidden;">
+          <table>
+            <thead>
+              <tr>
+                <th>Feature</th>
+                <th style="color:#c4b5fd;">FROST</th>
+                <th style="color:#93c5fd;">FOG</th>
+                <th style="color:#fdba74;">DIRT</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>global_mean</code></td>
+                <td style="color:#c4b5fd; font-weight:600;">HIGH ↑</td>
+                <td>Mid</td>
+                <td>Low/normal</td>
+              </tr>
+              <tr>
+                <td><code>histogram_spread</code></td>
+                <td style="color:#c4b5fd; font-weight:600;">VERY LOW ↓</td>
+                <td style="color:#93c5fd;">Low ↓</td>
+                <td>Normal</td>
+              </tr>
+              <tr>
+                <td><code>laplacian_var</code></td>
+                <td style="color:#c4b5fd; font-weight:600;">LOW ↓</td>
+                <td style="color:#93c5fd;">LOW ↓</td>
+                <td>Normal (unaffected areas)</td>
+              </tr>
+              <tr>
+                <td><code>occlusion_score</code></td>
+                <td>Low</td>
+                <td>Low</td>
+                <td style="color:#fdba74; font-weight:600;">HIGH ↑</td>
+              </tr>
+              <tr>
+                <td><code>cell_mean_variance</code></td>
+                <td style="color:#c4b5fd; font-weight:600;">LOW (uniform)</td>
+                <td style="color:#93c5fd; font-weight:600;">LOW (uniform)</td>
+                <td style="color:#fdba74; font-weight:600;">HIGH (local)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     8 FEATURES
+════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>The 8 Features Extracted Per Frame</h2>
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Feature Name</th>
+          <th>Type</th>
+          <th>How It's Computed</th>
+          <th>What It Detects</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="color:var(--muted);">1</td>
+          <td><code>laplacian_var</code></td>
+          <td><code>uint8</code></td>
+          <td>3×3 Laplacian kernel applied at sampled pixels; variance of results</td>
+          <td>Sharpness — drops for fog and frost; roughly normal for dirt in unaffected regions</td>
+        </tr>
+        <tr>
+          <td style="color:var(--muted);">2</td>
+          <td><code>global_contrast</code></td>
+          <td><code>uint8</code></td>
+          <td>Track min + max of sampled pixels; <code>(max−min)×256/(max+min+1)</code></td>
+          <td>Michelson contrast — drops when fog or frost reduces dynamic range</td>
+        </tr>
+        <tr>
+          <td style="color:var(--muted);">3</td>
+          <td><code>histogram_spread</code></td>
+          <td><code>uint8</code></td>
+          <td>8-bin histogram; span between 5th and 95th percentile bins</td>
+          <td>Dynamic range — very low for frost (histogram collapsed to high end); low for fog</td>
+        </tr>
+        <tr>
+          <td style="color:var(--muted);">4</td>
+          <td><code>global_mean</code></td>
+          <td><code>uint8</code></td>
+          <td>Sum of all sampled pixels ÷ count</td>
+          <td><strong>Key frost/fog discriminator</strong> — HIGH for frost (bright veil), mid for fog</td>
+        </tr>
+        <tr>
+          <td style="color:var(--muted);">5</td>
+          <td><code>occlusion_score</code></td>
+          <td><code>uint8</code></td>
+          <td>Count of 4×3 grid cells with low internal variance AND dark mean</td>
+          <td>Dark-blob detector — HIGH only for mud/dirt</td>
+        </tr>
+        <tr>
+          <td style="color:var(--muted);">6</td>
+          <td><code>obstruction_score</code></td>
+          <td><code>uint8</code></td>
+          <td>Count of 4×3 grid cells with low internal variance (any brightness)</td>
+          <td>Any opaque obstruction — bright tape, ice, sticker, or dirt</td>
+        </tr>
+        <tr>
+          <td style="color:var(--muted);">7</td>
+          <td><code>cell_mean_variance</code></td>
+          <td><code>uint8</code></td>
+          <td>Variance of the 12 cell mean values across the frame</td>
+          <td>Spatial uniformity — HIGH for dirt (local blobs), LOW for fog/frost (uniform degradation)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--muted);">8</td>
+          <td><code>temporal_mad</code></td>
+          <td><code>uint16</code></td>
+          <td>Mean Absolute Difference vs 16×12 thumbnail of previous frame; EMA smoothed</td>
+          <td>Inter-frame motion — low + stable when scene texture is locked by degradation</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     MEMORY BUDGET
+════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>Memory Budget (&lt; 2KB Target)</h2>
+  <div class="grid-3">
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+        <h3>Buffers</h3>
+        <span style="font-size:0.75rem; color:var(--muted);">~328 bytes</span>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:0.4rem; font-size:0.85rem;">
+        <div style="display:flex; justify-content:space-between;">
+          <span style="color:var(--muted);">Temporal thumbnail (16×12)</span>
+          <code>192 B</code>
+        </div>
+        <div style="display:flex; justify-content:space-between;">
+          <span style="color:var(--muted);">Grid cell accumulators (12 cells)</span>
+          <code>~120 B</code>
+        </div>
+        <div style="display:flex; justify-content:space-between;">
+          <span style="color:var(--muted);">Histogram (8 × uint16)</span>
+          <code>16 B</code>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+        <h3>Structs</h3>
+        <span style="font-size:0.75rem; color:var(--muted);">~56 bytes</span>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:0.4rem; font-size:0.85rem;">
+        <div style="display:flex; justify-content:space-between;">
+          <span style="color:var(--muted);">DegradationFeatures</span>
+          <code>~12 B</code>
+        </div>
+        <div style="display:flex; justify-content:space-between;">
+          <span style="color:var(--muted);">DegradationBaseline (fast+slow)</span>
+          <code>~36 B</code>
+        </div>
+        <div style="display:flex; justify-content:space-between;">
+          <span style="color:var(--muted);">State machine (hysteresis)</span>
+          <code>~8 B</code>
+        </div>
+      </div>
+    </div>
+    <div class="card green-left">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+        <h3>Total Estimate</h3>
+        <span style="font-size:0.75rem; color:var(--green);">~424 / 2048 bytes</span>
+      </div>
+      <div style="background:var(--surface2); border-radius:6px; overflow:hidden; height:1.2rem; margin-bottom:0.5rem;">
+        <div style="background:var(--green); height:100%; width:20.7%; transition:width 0.5s;"></div>
+      </div>
+      <div style="font-size:0.82rem; color:var(--muted);">~21% of budget used. Exact figure will be verified via ARM map file after implementation.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     FILE STRUCTURE & BUILD
+════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>File Structure &amp; Build</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h3 style="margin-bottom:0.75rem;">Files to Produce</h3>
+      <div style="display:flex; flex-direction:column; gap:0.5rem;">
+        <div style="display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0.75rem; background:var(--surface2); border-radius:6px;">
+          <span style="color:var(--accent); font-size:1rem;">📄</span>
+          <div>
+            <code style="color:white;">degradation.h</code>
+            <div style="font-size:0.78rem; color:var(--muted);">All public types, enums, structs, function declarations</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0.75rem; background:var(--surface2); border-radius:6px;">
+          <span style="color:var(--accent); font-size:1rem;">⚙️</span>
+          <div>
+            <code style="color:white;">degradation.c</code>
+            <div style="font-size:0.78rem; color:var(--muted);">Full implementation — no stubs, no TODOs</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0.75rem; background:var(--surface2); border-radius:6px;">
+          <span style="color:var(--green); font-size:1rem;">🖥️</span>
+          <div>
+            <code style="color:white;">test_harness.c</code>
+            <div style="font-size:0.78rem; color:var(--muted);">PC-only: reads raw frames, writes CSV results</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0.75rem; background:var(--surface2); border-radius:6px;">
+          <span style="color:var(--yellow); font-size:1rem;">📝</span>
+          <div>
+            <code style="color:white;">README.md</code>
+            <div style="font-size:0.78rem; color:var(--muted);">Build instructions, tuning guide, memory map</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-bottom:0.75rem;">Build Commands</h3>
+      <div style="font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem;">PC TEST BUILD</div>
+      <pre>gcc -O2 -Wall -Wextra -std=c99 \
+    -o test_harness.exe \
+    degradation.c test_harness.c</pre>
+      <div style="font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem; margin-top:0.75rem;">ARM TARGET BUILD</div>
+      <pre>arm-none-eabi-gcc \
+    -mcpu=cortex-m0 -mthumb -msoft-float \
+    -O2 -fno-builtin -Wall -Wextra \
+    -c degradation.c -o degradation.o</pre>
+      <div style="font-size:0.78rem; color:var(--muted); margin-bottom:0.3rem; margin-top:0.75rem;">VERIFY NO FLOAT (must print nothing)</div>
+      <pre>arm-none-eabi-objdump -d degradation.o \
+    | grep __aeabi_fmul</pre>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     TO DO LIST
+════════════════════════════════════════════════ -->
+<div class="section">
+  <h2>Development To Do — Phase by Phase</h2>
+  <div class="grid-2">
+
+    <!-- Phase 1 -->
+    <div>
+      <div class="phase-block">
+        <div class="phase-title" style="color:var(--accent);">Phase 1 — degradation.h</div>
+        <div class="todo-list">
+          <div class="todo-item"><div class="todo-check"></div>DegradationClass enum (CLEAN, FOG, FROST, DIRT, OBSTRUCTION, UNKNOWN)</div>
+          <div class="todo-item"><div class="todo-check"></div>DegradationFeatures struct (8 fields)</div>
+          <div class="todo-item"><div class="todo-check"></div>DegradationBaseline struct (fast + slow EMA per feature, uint16_t)</div>
+          <div class="todo-item"><div class="todo-check"></div>DegradationState struct (baseline + hysteresis + warmup + thumbnail)</div>
+          <div class="todo-item"><div class="todo-check"></div>DegradationResult struct (class + confidence + features)</div>
+          <div class="todo-item"><div class="todo-check"></div>Function declarations: update, serialize, deserialize</div>
+          <div class="todo-item"><div class="todo-check"></div>Include guards (#ifndef / #define / #endif)</div>
+          <div class="todo-item" style="border-color:var(--green);"><div class="todo-check" style="border-color:var(--green);"></div><span style="color:var(--green);">✓ Compile check</span></div>
+        </div>
+      </div>
+
+      <!-- Phase 2 -->
+      <div class="phase-block">
+        <div class="phase-title" style="color:var(--accent2);">Phase 2 — degradation.c</div>
+        <div class="todo-list">
+          <div class="todo-item"><div class="todo-check"></div>Single-pass loop with stride 4</div>
+          <div class="todo-item"><div class="todo-check"></div>Laplacian variance accumulation</div>
+          <div class="todo-item"><div class="todo-check"></div>Michelson contrast (min/max tracking)</div>
+          <div class="todo-item"><div class="todo-check"></div>8-bin histogram + mean + spread (5th–95th percentile)</div>
+          <div class="todo-item"><div class="todo-check"></div>4×3 grid cell mean + variance → occlusion, obstruction, cell_mean_variance</div>
+          <div class="todo-item"><div class="todo-check"></div>16×12 thumbnail MAD + EMA</div>
+          <div class="todo-item"><div class="todo-check"></div>Dual-timescale EMA baseline update</div>
+          <div class="todo-item"><div class="todo-check"></div>60-frame warmup logic</div>
+          <div class="todo-item"><div class="todo-check"></div>Ratio computation for all features</div>
+          <div class="todo-item"><div class="todo-check"></div>Decision tree classifier (6 branches)</div>
+          <div class="todo-item"><div class="todo-check"></div>Hysteresis state machine (5 in / 15 out)</div>
+          <div class="todo-item"><div class="todo-check"></div>Serialize / deserialize for NVM</div>
+          <div class="todo-item" style="border-color:var(--green);"><div class="todo-check" style="border-color:var(--green);"></div><span style="color:var(--green);">✓ PC compile check (zero warnings)</span></div>
+          <div class="todo-item" style="border-color:var(--green);"><div class="todo-check" style="border-color:var(--green);"></div><span style="color:var(--green);">✓ ARM compile check (zero warnings)</span></div>
+          <div class="todo-item" style="border-color:var(--red);"><div class="todo-check" style="border-color:var(--red);"></div><span style="color:var(--red);">✓ No FPU instructions in disassembly</span></div>
+          <div class="todo-item" style="border-color:var(--red);"><div class="todo-check" style="border-color:var(--red);"></div><span style="color:var(--red);">✓ Static RAM &lt; 2KB (map file)</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <!-- Phase 3 -->
+      <div class="phase-block">
+        <div class="phase-title" style="color:var(--green);">Phase 3 — test_harness.c</div>
+        <div class="todo-list">
+          <div class="todo-item"><div class="todo-check"></div>CLI arg parsing (input file, width, height, output CSV)</div>
+          <div class="todo-item"><div class="todo-check"></div>Raw frame reader with fread() — no external dependencies</div>
+          <div class="todo-item"><div class="todo-check"></div>Call degradation_update() every 3rd frame</div>
+          <div class="todo-item"><div class="todo-check"></div>CSV output: frame, all 8 features, label, confidence</div>
+          <div class="todo-item" style="border-color:var(--green);"><div class="todo-check" style="border-color:var(--green);"></div><span style="color:var(--green);">✓ Compile + run on clean footage (zero false positives)</span></div>
+        </div>
+      </div>
+
+      <!-- Phase 4 -->
+      <div class="phase-block">
+        <div class="phase-title" style="color:var(--yellow);">Phase 4 — Verification &amp; Summary</div>
+        <div class="todo-list">
+          <div class="todo-item"><div class="todo-check"></div>Clean footage (day + night): zero false positives</div>
+          <div class="todo-item"><div class="todo-check"></div>Fog simulation: FOG detected within 1 second (10 frames)</div>
+          <div class="todo-item"><div class="todo-check"></div>Dark covering: DIRT detected within 0.5 seconds (5 frames)</div>
+          <div class="todo-item"><div class="todo-check"></div>Petroleum jelly lens: FROST detected within 1 second</div>
+          <div class="todo-item"><div class="todo-check"></div>Bright tape on corner: OBSTRUCTION within 0.5 seconds</div>
+          <div class="todo-item"><div class="todo-check"></div>RAM usage breakdown by variable</div>
+          <div class="todo-item"><div class="todo-check"></div>Integer overflow risks + mitigations documented</div>
+          <div class="todo-item"><div class="todo-check"></div>Ratio threshold values + reasoning for each branch</div>
+          <div class="todo-item"><div class="todo-check"></div>Any spec deviations + reasons</div>
+        </div>
+      </div>
+
+      <!-- Key C concepts box -->
+      <div class="card yellow-left">
+        <h3 style="margin-bottom:0.6rem;">C Concepts to Understand (for non-C developers)</h3>
+        <div style="font-size:0.83rem; display:flex; flex-direction:column; gap:0.5rem; color:var(--muted);">
+          <div><strong style="color:var(--text);">.h vs .c files</strong> — Header = contract (what exists). Source = implementation (how it works). Any file that wants to use our module just includes the header.</div>
+          <div><strong style="color:var(--text);">Static allocation</strong> — Every buffer declared once at compile time as a fixed array. No surprise memory requests at runtime. The MCU always knows exactly what RAM is in use.</div>
+          <div><strong style="color:var(--text);">No floats → bit shifts</strong> — <code>x &gt;&gt; 4</code> = divide by 16. <code>x * 128 / baseline</code> = a ratio centered on 128. All integer, all fast.</div>
+          <div><strong style="color:var(--text);">uint8_t overflow</strong> — 255 + 1 = 0 (wraps). Every accumulator must be sized to never overflow its range. We document every risk point.</div>
+          <div><strong style="color:var(--text);">Pointers</strong> — <code>const uint8_t *frame</code> passes the image's memory address, not a copy. <code>frame[y*W + x]</code> reads pixel at (x, y).</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<hr class="divider">
+<div style="text-align:center; color:var(--muted); font-size:0.8rem; padding-bottom:1rem;">
+  Camera Degradation Detection · ARM Cortex-M0 · C99 · &lt;2KB RAM · project_brief.md is the source of truth
+</div>
+
+</body>
+</html>

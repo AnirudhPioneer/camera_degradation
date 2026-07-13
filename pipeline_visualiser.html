@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>degradation.c — Pipeline Visualiser</title>
+<style>
+  :root{
+    --bg:#0b0f17; --panel:#111827; --panel2:#0d1420; --edge:#1f2a3d; --edge-hi:#2e415f;
+    --tx:#dbe4f0; --tx-dim:#8fa0b8; --tx-faint:#5c6b82;
+    --accent:#38bdf8; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+    --c-clean:#22c55e; --c-fog:#94a3b8; --c-frost:#67e8f9; --c-obst:#f97316; --c-unk:#a78bfa;
+    --mono:"Cascadia Code",Consolas,ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--tx);font-family:"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.45}
+  code,.mono{font-family:var(--mono)}
+  h1{font-size:17px;margin:0;font-weight:600;letter-spacing:.3px}
+  h1 .dim{color:var(--tx-faint);font-weight:400}
+  h2{font-size:15px;margin:0 0 4px 0;font-weight:600}
+  h2 .snum{display:inline-block;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;
+    background:var(--edge);color:var(--tx-dim);font-size:12px;margin-right:8px;font-family:var(--mono)}
+  section.stage.active h2 .snum{background:var(--accent);color:#04121e}
+  section.stage.done h2 .snum{background:var(--ok);color:#04180b}
+
+  /* ---------- header ---------- */
+  header{position:sticky;top:0;z-index:50;background:rgba(11,15,23,.93);backdrop-filter:blur(6px);
+    border-bottom:1px solid var(--edge);padding:10px 18px}
+  .hrow{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .hrow .spacer{flex:1}
+  .btn{background:var(--panel);border:1px solid var(--edge);color:var(--tx);padding:6px 12px;border-radius:7px;
+    cursor:pointer;font-size:13px;transition:border-color .15s,background .15s;user-select:none}
+  .btn:hover{border-color:var(--accent)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn.primary{background:#0c3a52;border-color:#15597d}
+  .btn.primary:hover{border-color:var(--accent)}
+  .btn-group{display:flex;gap:6px;align-items:center}
+  .demo-lbl{color:var(--tx-faint);font-size:12px;margin-right:2px}
+  select,input[type=checkbox]{accent-color:var(--accent)}
+  select{background:var(--panel);color:var(--tx);border:1px solid var(--edge);border-radius:6px;padding:5px 6px;font-size:13px}
+  label.chk{display:flex;gap:5px;align-items:center;color:var(--tx-dim);font-size:12px;cursor:pointer}
+
+  /* stepper */
+  .stepper{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+  .step-chip{display:flex;gap:7px;align-items:center;padding:5px 11px;border:1px solid var(--edge);border-radius:20px;
+    color:var(--tx-faint);font-size:12px;cursor:pointer;transition:all .2s;background:var(--panel2)}
+  .step-chip .idx{font-family:var(--mono);font-size:11px}
+  .step-chip:hover{border-color:var(--edge-hi);color:var(--tx-dim)}
+  .step-chip.cur{border-color:var(--accent);color:var(--accent);background:#0a2436}
+  .step-chip.done{border-color:#14532d;color:var(--ok)}
+
+  /* ---------- layout ---------- */
+  main{max-width:1180px;margin:0 auto;padding:18px}
+  /* scroll-margin keeps the numbered heading clear of the sticky header on auto-scroll */
+  section.stage{background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:16px 18px;
+    margin-bottom:18px;transition:border-color .3s,opacity .3s;opacity:.45;scroll-margin-top:150px}
+  section.stage.active{border-color:var(--accent);opacity:1;box-shadow:0 0 0 1px rgba(56,189,248,.25),0 8px 30px rgba(0,0,0,.35)}
+  section.stage.done{opacity:1;border-color:#1d3a2a}
+  .note{color:var(--tx-dim);font-size:13px;margin:2px 0 12px 0;max-width:900px}
+  .note code{color:var(--accent);font-size:12px}
+  .src-ref{color:var(--tx-faint);font-size:11px;margin-top:10px;font-family:var(--mono)}
+  .row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+  figure{margin:0}
+  figcaption{color:var(--tx-faint);font-size:12px;margin-top:5px;text-align:center}
+  canvas.px{image-rendering:pixelated;border:1px solid var(--edge);border-radius:6px;background:#000;display:block;
+    max-width:100%;height:auto}
+  /* the scan base+overlay pair must resize together, so the wrapper owns the width */
+  .canvas-stack{position:relative;line-height:0;max-width:100%}
+  .canvas-stack canvas{max-width:100%;height:auto}
+  .canvas-stack canvas.ovl{position:absolute;left:0;top:0;width:100%;height:100%;border-color:transparent;background:transparent}
+
+  /* ---------- dropzone ---------- */
+  #dropzone{border:2px dashed var(--edge-hi);border-radius:14px;padding:52px 20px;text-align:center;margin:26px auto;
+    max-width:760px;transition:all .2s;cursor:pointer}
+  #dropzone .big{font-size:19px;margin-bottom:8px}
+  #dropzone .sub{color:var(--tx-dim);font-size:13px;margin-bottom:18px}
+  body.drag-anywhere #dropzone{border-color:var(--accent);background:#0a2436}
+
+  /* ---------- panels ---------- */
+  .panel{background:var(--panel2);border:1px solid var(--edge);border-radius:9px;padding:10px 12px;min-width:170px}
+  .panel h3{margin:0 0 8px 0;font-size:11px;font-weight:600;letter-spacing:.9px;text-transform:uppercase;color:var(--tx-faint)}
+  .kv{display:flex;justify-content:space-between;gap:14px;font-size:13px;padding:2px 0}
+  .kv .k{color:var(--tx-dim)}
+  .kv .v{font-family:var(--mono);color:var(--tx)}
+  .kv .v.hl{color:var(--accent)}
+
+  /* kernel inspector */
+  .kgrid{display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(3,36px);gap:3px;margin-bottom:8px}
+  .kcell{display:flex;align-items:center;justify-content:center;background:#0a101c;border:1px solid var(--edge);
+    border-radius:5px;font-family:var(--mono);font-size:12px;color:var(--tx-dim)}
+  .kcell.c{background:#0c3a52;border-color:var(--accent);color:#e6f6ff;font-weight:600}
+  .kcell.n{color:var(--tx)}
+  .kcell.x{border-style:dashed;color:var(--tx-faint);opacity:.4}
+  .kmath{font-family:var(--mono);font-size:11.5px;color:var(--tx-dim);line-height:1.7}
+  .kmath b{color:var(--accent);font-weight:600}
+
+  /* histogram */
+  .hist{display:flex;align-items:flex-end;gap:4px;height:92px;padding:4px 2px 0 2px}
+  .hbarw{flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%;position:relative}
+  .hbar{background:linear-gradient(180deg,#38bdf8,#155e86);border-radius:3px 3px 0 0;min-height:1px;height:0%;
+    transition:height .12s linear}
+  .hbarw.walk-lo .hbar{background:linear-gradient(180deg,#f59e0b,#8a5a06)}
+  .hbarw.walk-hi .hbar{background:linear-gradient(180deg,#a78bfa,#5b3fa8)}
+  .hbarw.pct .hbar{outline:2px solid #fff}
+  .hlabels{display:flex;gap:4px;margin-top:4px}
+  .hlabels span{flex:1;text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--tx-faint)}
+  .hwalk-msg{font-family:var(--mono);font-size:11px;color:var(--tx-dim);min-height:16px;margin-top:6px}
+  .hist.mini{height:56px;padding:2px 0 0 0;margin-bottom:2px}
+
+  /* range bar (min/mean/max) */
+  .range-bar{position:relative;height:14px;background:linear-gradient(90deg,#000,#fff);border-radius:4px;
+    border:1px solid var(--edge);margin:8px 0 2px 0}
+  .range-mark{position:absolute;top:-4px;width:2px;height:22px;border-radius:1px}
+  .range-mark.mn{background:var(--accent)}
+  .range-mark.mx{background:var(--warn)}
+  .range-mark.me{background:var(--ok)}
+  .range-leg{display:flex;justify-content:space-between;font-size:10.5px;color:var(--tx-faint);font-family:var(--mono)}
+
+  /* progress line under scan canvas */
+  .scan-progress{font-family:var(--mono);font-size:12px;color:var(--tx-dim);margin-top:6px}
+  .scan-progress b{color:var(--accent);font-weight:600}
+
+  /* feature cards */
+  .fgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px}
+  .fcard{background:var(--panel2);border:1px solid var(--edge);border-radius:10px;padding:12px 14px;
+    opacity:.22;transform:translateY(6px);transition:opacity .35s,transform .35s,border-color .35s}
+  .fcard.on{opacity:1;transform:none;border-color:var(--edge-hi)}
+  .fcard.temporal.on{opacity:.65}
+  .fcard .fname{font-family:var(--mono);font-size:13px;color:var(--accent);margin-bottom:2px}
+  .fcard .fdesc{font-size:12px;color:var(--tx-dim);margin-bottom:8px;min-height:30px}
+  .fcard .fformula{font-family:var(--mono);font-size:11.5px;color:var(--tx-dim);background:#0a101c;
+    border:1px solid var(--edge);border-radius:6px;padding:6px 8px;margin-bottom:8px;white-space:nowrap;overflow-x:auto}
+  .fcard .fformula b{color:var(--tx)}
+  .fval-row{display:flex;align-items:baseline;gap:8px}
+  .fval{font-family:var(--mono);font-size:26px;font-weight:600;color:var(--tx)}
+  .funit{color:var(--tx-faint);font-size:11px;font-family:var(--mono)}
+  .fbar{position:relative;height:8px;background:#0a101c;border:1px solid var(--edge);border-radius:4px;margin-top:8px}
+  .fbar .fill{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:4px;width:0%;transition:width .3s}
+  .fbar .tick{position:absolute;top:-4px;width:2px;height:16px;background:var(--warn);opacity:.9}
+  .fbar .tick.t2{background:var(--bad)}
+  .fticks-leg{font-size:10.5px;color:var(--tx-faint);font-family:var(--mono);margin-top:5px}
+  .fticks-leg .w{color:var(--warn)} .fticks-leg .r{color:var(--bad)}
+
+  /* decision tree */
+  .rule{background:var(--panel2);border:1px solid var(--edge);border-radius:10px;padding:12px 14px;margin-bottom:10px;
+    opacity:.22;transition:opacity .3s,border-color .3s}
+  .rule.on{opacity:1}
+  .rule.fired{border-color:var(--c-obst)}
+  .rule.rejected{opacity:.55}
+  .rule.skipped{opacity:.3}
+  .rule-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .rule-pri{font-family:var(--mono);font-size:11px;color:var(--tx-faint)}
+  .rule-name{font-family:var(--mono);font-size:14px;font-weight:600}
+  .rule-status{margin-left:auto;font-size:12px;font-family:var(--mono);color:var(--tx-faint)}
+  .rule-status.fire{color:var(--ok)} .rule-status.rej{color:var(--bad)}
+  .conds{display:flex;flex-wrap:wrap;gap:6px}
+  .cond{font-family:var(--mono);font-size:12px;padding:4px 9px;border-radius:6px;border:1px solid var(--edge);
+    color:var(--tx-faint);background:#0a101c;opacity:.35;transition:all .2s}
+  .cond.eval{opacity:1}
+  .cond.pass{border-color:#14532d;color:var(--ok);background:#07190e}
+  .cond.fail{border-color:#5f1d1d;color:var(--bad);background:#1c0b0b}
+  .cond .val{color:var(--tx)}
+  .rule-conf{font-family:var(--mono);font-size:12px;color:var(--tx-dim);margin-top:8px;display:none}
+  .rule.fired .rule-conf{display:block}
+  .and-sep{color:var(--tx-faint);font-size:11px;align-self:center;font-family:var(--mono)}
+
+  /* verdict */
+  #verdict-wrap{display:none}
+  .verdict-badge{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:18px;border-radius:12px;
+    border:1px solid var(--edge-hi);background:var(--panel2);margin-bottom:14px}
+  .vclass{font-family:var(--mono);font-size:34px;font-weight:700;letter-spacing:1px}
+  .vconf{min-width:220px}
+  .vconf .lbl{font-size:11px;color:var(--tx-faint);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px}
+  .vconf .cbar{height:10px;border-radius:5px;background:#0a101c;border:1px solid var(--edge);position:relative;overflow:hidden}
+  .vconf .cbar .fill{position:absolute;inset:0;width:0%;border-radius:5px}
+  .vconf .cnum{font-family:var(--mono);font-size:13px;margin-top:4px;color:var(--tx-dim)}
+  table.ftab{border-collapse:collapse;width:100%;font-size:12.5px}
+  table.ftab th,table.ftab td{border:1px solid var(--edge);padding:5px 9px;text-align:left}
+  table.ftab th{color:var(--tx-faint);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.6px;background:#0a101c}
+  table.ftab td.mono{font-family:var(--mono)}
+  table.ftab tr.temporal td{color:var(--tx-faint)}
+  .cellgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;max-width:460px}
+  .cellbox{border:1px solid var(--edge);border-radius:7px;padding:6px 8px;font-family:var(--mono);font-size:11px;
+    background:#0a101c;position:relative}
+  .cellbox .ci{color:var(--tx-faint);font-size:9.5px}
+  .cellbox .cm{font-size:14px}
+  .cellbox .cv{color:var(--tx-dim);font-size:10.5px}
+  .cellbox.flat{border-color:var(--warn)}
+  .cellbox.dark{border-color:var(--bad)}
+  .cellbox .tag{position:absolute;right:5px;top:5px;font-size:9px;padding:1px 5px;border-radius:4px}
+  .cellbox .tag.obs{background:#3a2605;color:var(--warn)}
+  .cellbox .tag.occ{background:#3a0d0d;color:var(--bad)}
+  .legend-line{font-size:11.5px;color:var(--tx-dim);margin-top:8px}
+  .legend-line .sw{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:-1px;margin:0 3px 0 8px}
+
+  .callout{border-left:3px solid var(--accent);background:#0a1a26;border-radius:0 8px 8px 0;
+    padding:9px 13px;font-size:12.5px;color:var(--tx-dim);margin-top:12px;max-width:860px}
+  .callout b{color:var(--tx)}
+
+  footer{color:var(--tx-faint);font-size:11.5px;text-align:center;padding:10px 0 30px 0;font-family:var(--mono)}
+  .heat-legend{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--tx-faint);margin-top:5px;justify-content:center}
+  .heat-grad{width:120px;height:8px;border-radius:4px;border:1px solid var(--edge);
+    background:linear-gradient(90deg,#0b1020,#144a7c,#22b1c4,#f2e34c,#ffffff)}
+  @media (max-width:720px){ .vclass{font-size:24px} }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hrow">
+    <h1>degradation.c <span class="dim">— single-pass pipeline visualiser</span></h1>
+    <div class="spacer"></div>
+    <button class="btn primary" id="btnLoad">Load image…</button>
+    <input type="file" id="fileInput" accept="image/*" style="display:none">
+    <span class="demo-lbl">demo scenes:</span>
+    <div class="btn-group">
+      <button class="btn" data-demo="clean">Clean</button>
+      <button class="btn" data-demo="fog">Fog</button>
+      <button class="btn" data-demo="frost">Frost</button>
+      <button class="btn" data-demo="obstruction">Obstruction</button>
+    </div>
+  </div>
+  <div class="hrow" style="margin-top:8px">
+    <div class="btn-group">
+      <button class="btn" id="btnPlay" disabled>▶ Play</button>
+      <button class="btn" id="btnSkip" disabled>⏭ Skip stage</button>
+      <button class="btn" id="btnRestart" disabled>↺ Restart</button>
+    </div>
+    <label class="chk">speed
+      <select id="speedSel">
+        <option value="0.25">0.25×</option><option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option><option value="2">2×</option>
+        <option value="4">4×</option><option value="8">8×</option>
+      </select>
+    </label>
+    <label class="chk"><input type="checkbox" id="chkScroll" checked> auto-scroll</label>
+    <label class="chk" id="noiseCtl" title="Downsampled photos have a zero noise floor; a real 320×240 sensor never does. This adds a small Gaussian read-noise floor so uploaded stills resemble what the detector was tuned on. Demo scenes ignore it.">
+      sensor noise σ
+      <input type="range" id="noiseSel" min="0" max="6" step="1" value="2" style="width:80px;accent-color:var(--accent)">
+      <span class="mono" id="noiseVal" style="color:var(--accent);min-width:44px">2 (u8)</span>
+    </label>
+    <div class="spacer"></div>
+    <nav class="stepper" id="stepper"></nav>
+  </div>
+</header>
+
+<div id="dropzone">
+  <div class="big">Drop an image here, or click to browse</div>
+  <div class="sub">It will be cover-cropped to 4:3 and resampled to the reference frame geometry
+    (320×240, 8-bit grayscale) — exactly what <code style="color:var(--accent)">degradation_update()</code> receives.</div>
+  <div class="sub">…or pick a synthetic demo scene above to see each classification fire.</div>
+  <div class="sub" style="max-width:640px;margin:14px auto 0;color:var(--tx-faint)">
+    <b style="color:var(--tx-dim)">A note on "wrong" classifications:</b> this is an <b>absolute-threshold degradation
+    detector</b> calibrated for one automotive road camera — not a general image classifier. Bright/smooth photos
+    read FROST, low-contrast photos read FOG, and sky-over-ground scenes read OBSTRUCTION because that is what the
+    real thresholds do on those pixels. The <b>sensor-noise σ</b> control models the read-noise floor a real sensor
+    always has (a downsampled JPEG has none), which removes the most common false FROST/FOG on ordinary photos.</div>
+</div>
+
+<main id="main" style="display:none">
+
+  <!-- ================= STAGE 1 : INPUT / GRAYSCALE ================= -->
+  <section class="stage" id="sec-gray">
+    <h2><span class="snum">1</span>Input → 8-bit grayscale frame</h2>
+    <p class="note">The detector consumes a row-major <code>uint8</code> grayscale buffer — no colour ever reaches
+      the algorithm. The uploaded image is cover-cropped to 4:3, resampled to <b>320×240</b>, and converted with
+      integer BT.601 luma: <code>gray = (R·4899 + G·9617 + B·1868 + 8192) &gt;&gt; 14</code>.
+      <span id="noiseNote"></span></p>
+    <div class="row">
+      <figure>
+        <canvas class="px" id="cvOrig" width="320" height="240" style="width:400px"></canvas>
+        <figcaption id="capOrig">input (cropped 4:3)</figcaption>
+      </figure>
+      <figure>
+        <canvas class="px" id="cvGrayAnim" width="320" height="240" style="width:400px"></canvas>
+        <figcaption>uint8 grayscale · 320×240 · 76 800 bytes</figcaption>
+      </figure>
+    </div>
+    <div class="src-ref">↳ degradation_update(state, frame, width, height, result) — degradation.c:92</div>
+  </section>
+
+  <!-- ================= STAGE 2 : SINGLE-PASS SCAN ================= -->
+  <section class="stage" id="sec-scan">
+    <h2><span class="snum">2</span>Single pass over the frame · stride 4</h2>
+    <p class="note">One loop visits every 4th pixel in x and y (1/16th of all pixels ≈ <b>4 800 samples</b>),
+      starting at (1,1) and stopping one pixel short of each edge so the 3×3 Laplacian never needs a bounds check.
+      Every sample simultaneously feeds <b>four</b> accumulators: global min/max/sum, the 8-bin histogram,
+      the Laplacian sharpness sum, and its 4×3 grid cell.</p>
+    <div class="row">
+      <div>
+        <div class="canvas-stack">
+          <canvas class="px" id="cvScanBase" width="320" height="240" style="width:512px"></canvas>
+          <canvas class="px ovl" id="cvScanOvl" width="320" height="240" style="width:512px"></canvas>
+        </div>
+        <div class="scan-progress" id="scanProg">row —/— · 0 samples</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;flex:1;min-width:250px">
+        <div class="panel">
+          <h3>3×3 Laplacian kernel — live sample</h3>
+          <div style="display:flex;gap:14px;flex-wrap:wrap">
+            <div class="kgrid" id="kgrid">
+              <div class="kcell x">·</div><div class="kcell n" id="kU">—</div><div class="kcell x">·</div>
+              <div class="kcell n" id="kL">—</div><div class="kcell c" id="kC">—</div><div class="kcell n" id="kR">—</div>
+              <div class="kcell x">·</div><div class="kcell n" id="kD">—</div><div class="kcell x">·</div>
+            </div>
+            <div class="kmath" id="kmath">lap = 4·p − up − down − left − right<br>|lap| clamped to 255, then squared</div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>Global accumulators</h3>
+          <div class="kv"><span class="k">samples</span><span class="v" id="gvCount">0</span></div>
+          <div class="kv"><span class="k">min / max</span><span class="v"><span id="gvMin">255</span> / <span id="gvMax">0</span></span></div>
+          <div class="kv"><span class="k">running mean</span><span class="v hl" id="gvMean">—</span></div>
+          <div class="range-bar">
+            <div class="range-mark mn" id="rmMin" style="left:0%"></div>
+            <div class="range-mark me" id="rmMean" style="left:50%"></div>
+            <div class="range-mark mx" id="rmMax" style="left:100%"></div>
+          </div>
+          <div class="range-leg"><span>0</span><span style="color:var(--accent)">min</span><span style="color:var(--ok)">mean</span><span style="color:var(--warn)">max</span><span>255</span></div>
+        </div>
+        <div class="panel">
+          <h3>8-bin histogram · bin = pixel ≫ 5</h3>
+          <div class="hist" id="hist"></div>
+          <div class="hlabels" id="histLabels"></div>
+          <div class="hwalk-msg" id="histWalkMsg"></div>
+        </div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:16px">
+      <figure>
+        <canvas class="px" id="cvHeat" width="320" height="240" style="width:352px"></canvas>
+        <figcaption>|Laplacian| response — the sharpness signal</figcaption>
+        <div class="heat-legend"><span>0</span><div class="heat-grad"></div><span>255</span></div>
+      </figure>
+      <figure>
+        <canvas class="px" id="cvGrid" width="320" height="240" style="width:352px"></canvas>
+        <figcaption>4×3 grid — per-cell running mean (number = mean)</figcaption>
+      </figure>
+    </div>
+    <div class="src-ref">↳ main scan loop — degradation.c:145-192 · overflow analysis in comments at :103-119</div>
+  </section>
+
+  <!-- ================= STAGE 3 : THUMBNAIL ================= -->
+  <section class="stage" id="sec-thumb">
+    <h2><span class="snum">3</span>16×12 thumbnail &amp; temporal MAD</h2>
+    <p class="note">192 nearest-neighbour samples build a thumbnail of the frame. The mean absolute difference
+      (MAD) against the <em>previous</em> frame's thumbnail measures scene motion; a dual-timescale EMA smooths it.</p>
+    <div class="row">
+      <figure>
+        <canvas class="px" id="cvThumb" width="16" height="12" style="width:256px"></canvas>
+        <figcaption>thumbnail — 192 bytes of state</figcaption>
+      </figure>
+      <div class="panel" style="max-width:420px">
+        <h3>Temporal metrics (this frame)</h3>
+        <div class="kv"><span class="k">Σ |curr − prev|</span><span class="v" id="tvMadSum">—</span></div>
+        <div class="kv"><span class="k">raw_mad = Σ / 192</span><span class="v" id="tvRawMad">—</span></div>
+        <div class="kv"><span class="k">temporal_mad (fast EMA)</span><span class="v" id="tvMad">—</span></div>
+        <div class="kv"><span class="k">temporal_mad_var</span><span class="v" id="tvMadVar">—</span></div>
+        <div class="callout" style="margin-top:10px">⚠ <b>Single image:</b> the previous thumbnail is the zero-initialised
+          state, so MAD here is just the frame's own brightness. On live video this settles after one frame.
+          The absolute-threshold classifier does not read the temporal metrics.</div>
+      </div>
+    </div>
+    <div class="src-ref">↳ thumbnail update — degradation.c:199-213 · temporal MAD — degradation.c:363-379</div>
+  </section>
+
+  <!-- ================= STAGE 4 : FEATURES ================= -->
+  <section class="stage" id="sec-derive">
+    <h2><span class="snum">4</span>Feature derivation</h2>
+    <p class="note">The accumulators collapse into seven <code>uint8</code> features (plus the two temporal ones).
+      The <b>histogram_spread</b> card replays the 5%→95% percentile walk on its own mini histogram.</p>
+    <div class="fgrid" id="fgrid"></div>
+    <div class="src-ref">↳ feature derivation — degradation.c:218-354</div>
+  </section>
+
+  <!-- ================= STAGE 5 : DECISION TREE ================= -->
+  <section class="stage" id="sec-classify">
+    <h2><span class="snum">5</span>Absolute-threshold decision tree · priority order</h2>
+    <p class="note">Raw feature values are tested against fixed thresholds from <code>degradation.h</code> —
+      no baseline, no ratios. Rules run top-down; the <b>first match wins</b> and the rest are skipped.</p>
+    <div id="rules"></div>
+    <div class="src-ref">↳ classify_absolute() — degradation.c:48-86 · thresholds — degradation.h:81-119</div>
+  </section>
+
+  <!-- ================= STAGE 6 : VERDICT ================= -->
+  <section class="stage" id="sec-verdict">
+    <h2><span class="snum">6</span>Result</h2>
+    <div id="verdict-wrap">
+      <div class="verdict-badge" id="verdictBadge">
+        <div>
+          <div style="font-size:11px;color:var(--tx-faint);text-transform:uppercase;letter-spacing:.8px">raw_classification</div>
+          <div class="vclass" id="vClass">—</div>
+        </div>
+        <div class="vconf">
+          <div class="lbl">confidence</div>
+          <div class="cbar"><div class="fill" id="vConfFill"></div></div>
+          <div class="cnum" id="vConfNum">0 / 255</div>
+        </div>
+      </div>
+      <div class="row">
+        <div style="flex:1;min-width:330px">
+          <table class="ftab" id="vTable"></table>
+        </div>
+        <div>
+          <h3 style="font-size:11px;color:var(--tx-faint);text-transform:uppercase;letter-spacing:.9px;margin:0 0 8px 0">
+            Per-cell diagnostics (cell_obs_mask / cell_occ_mask)</h3>
+          <div class="cellgrid" id="vCells"></div>
+          <div class="legend-line">
+            <span class="sw" style="background:var(--warn)"></span>flat (obstruction candidate)
+            <span class="sw" style="background:var(--bad)"></span>flat + dark (occlusion)
+          </div>
+        </div>
+      </div>
+      <div class="callout" id="hystNote"></div>
+    </div>
+    <div class="src-ref">↳ hysteresis state machine — degradation.c:446-477 · DegradationResult — degradation.h:236-245</div>
+  </section>
+
+</main>
+
+<footer>faithful JS port of degradation.c — same integer arithmetic, same thresholds, same priority order</footer>
+
+<script>
+/*ENGINE-START*/
+/* =====================================================================
+   ENGINE — faithful JavaScript port of degradation.c (single frame).
+   Pure functions, no DOM. All arithmetic mirrors the C exactly:
+   integer division via Math.floor, uint8 clamps, same loop bounds.
+   ===================================================================== */
+"use strict";
+
+const W = 320, H = 240;
+const STRIDE = 4, GRID_COLS = 4, GRID_ROWS = 3, GRID_CELLS = 12;
+const THUMB_W = 16, THUMB_H = 12, THUMB_PIXELS = 192;
+const HIST_BINS = 8;
+
+/* Fine grid for the dark-occlusion demo (EXPERIMENTAL — failed dataset validation;
+   kept only to demonstrate the broad-occlusion failure mode. NOT in degradation.c
+   or detector.py — the visualiser is otherwise a faithful port). */
+const FINE_COLS = 8, FINE_ROWS = 6, FINE_CELLS = 48;
+
+/* Thresholds — degradation.h:81-119 (+ experimental dark-occlusion demo) */
+const THR = {
+  LAP_FROST: 5, LAP_BLUR: 15,
+  CONTRAST_LOW: 40,
+  SPREAD_FOG: 96, SPREAD_FROST: 128,
+  MEAN_BRIGHT: 60, MEAN_FLOOR: 40,
+  CELLVAR_UNIFORM: 50, CELLVAR_LOCAL: 60,
+  OCC_CELLS: 2, OBS_CELLS: 3,
+  CELL_LVAR: 8,
+  DARK_ABS: 40, DARK_OCC_CELLS: 4    /* demo: fine subcell mean<40 & flat; ≥4 → OBSTRUCTION */
+};
+
+const CLASS_NAMES = ["CLEAN", "FOG", "FROST", "OBSTRUCTION", "UNKNOWN"];
+
+function u8clamp(v) { return v > 255 ? 255 : v; }
+
+function newAcc() {
+  return {
+    cellSum:   new Uint32Array(GRID_CELLS),
+    cellSumsq: new Uint32Array(GRID_CELLS),
+    cellCount: new Uint32Array(GRID_CELLS),
+    /* fine grid (experimental dark-occlusion demo) */
+    fSum:   new Float64Array(FINE_CELLS),
+    fSumsq: new Float64Array(FINE_CELLS),
+    fCount: new Uint32Array(FINE_CELLS),
+    lapSumsq: 0, lapCount: 0,
+    hist: new Uint32Array(HIST_BINS),
+    sum: 0, count: 0, min: 255, max: 0
+  };
+}
+
+/* One sample row of the single-pass loop — degradation.c:147-191.
+   If `out` is given, push {x,y,p,lap} for every sample (for drawing). */
+function scanRow(gray, y, acc, out) {
+  for (let x = 1; x < W - 1; x += STRIDE) {
+    const p = gray[y * W + x];
+
+    if (p < acc.min) acc.min = p;
+    if (p > acc.max) acc.max = p;
+    acc.sum += p; acc.count++;
+
+    acc.hist[p >> 5]++;
+
+    /* Laplacian [0,1,0; 1,-4,1; 0,1,0], |lap| clamped to 255 then squared */
+    let lap = 4 * p
+            - gray[(y - 1) * W + x] - gray[(y + 1) * W + x]
+            - gray[y * W + x - 1]  - gray[y * W + x + 1];
+    if (lap < 0) lap = -lap;
+    if (lap > 255) lap = 255;
+    acc.lapSumsq += lap * lap;
+    acc.lapCount++;
+
+    const cx = Math.floor(x * GRID_COLS / W);
+    const cy = Math.floor(y * GRID_ROWS / H);
+    const ci = cy * GRID_COLS + cx;
+    acc.cellSum[ci] += p;
+    acc.cellSumsq[ci] += p * p;
+    acc.cellCount[ci]++;
+
+    /* fine grid (experimental dark-occlusion demo) */
+    const fi = Math.floor(y * FINE_ROWS / H) * FINE_COLS + Math.floor(x * FINE_COLS / W);
+    acc.fSum[fi] += p;
+    acc.fSumsq[fi] += p * p;
+    acc.fCount[fi]++;
+
+    if (out) out.push({ x, y, p, lap });
+  }
+}
+
+/* Sample row y-coordinates for a full frame */
+function sampleRows() {
+  const rows = [];
+  for (let y = 1; y < H - 1; y += STRIDE) rows.push(y);
+  return rows;
+}
+
+/* Thumbnail + MAD vs previous thumbnail (zeros for a single image)
+   — degradation.c:199-213 */
+function computeThumb(gray, prevThumb) {
+  const thumb = new Uint8Array(THUMB_PIXELS);
+  let madSum = 0;
+  for (let ty = 0; ty < THUMB_H; ty++) {
+    for (let tx = 0; tx < THUMB_W; tx++) {
+      const fy = Math.floor(ty * H / THUMB_H);
+      const fx = Math.floor(tx * W / THUMB_W);
+      const curr = gray[fy * W + fx];
+      const prev = prevThumb ? prevThumb[ty * THUMB_W + tx] : 0;
+      madSum += curr > prev ? curr - prev : prev - curr;
+      thumb[ty * THUMB_W + tx] = curr;
+    }
+  }
+  return { thumb, madSum, rawMad: Math.floor(madSum / THUMB_PIXELS) };
+}
+
+/* Derive all features from finished accumulators — degradation.c:218-354 */
+function deriveFeatures(acc) {
+  const f = {};
+
+  /* laplacian_var = clamp( (lapSumsq / lapCount) >> 4 ) */
+  f.laplacian_var = acc.lapCount > 0
+    ? u8clamp(Math.floor(acc.lapSumsq / acc.lapCount) >> 4) : 0;
+
+  /* Michelson contrast */
+  if (acc.count > 0) {
+    const num = (acc.max - acc.min) * 256;
+    const den = acc.max + acc.min + 1;
+    f.global_contrast = Math.floor(num / den);
+  } else f.global_contrast = 0;
+
+  f.global_mean = acc.count > 0 ? Math.floor(acc.sum / acc.count) : 0;
+
+  /* Histogram spread: 5th–95th percentile walk (records trace for animation) */
+  {
+    let binLo = 0, binHi = HIST_BINS - 1;
+    const target = Math.floor(acc.count / 20);
+    let cumul = 0, found = false;
+    const loSteps = [], hiSteps = [];
+    for (let b = 0; b < HIST_BINS; b++) {
+      cumul += acc.hist[b];
+      if (!found) {
+        loSteps.push({ bin: b, cumul });
+        if (cumul > target) { binLo = b; found = true; }
+      }
+    }
+    cumul = 0; found = false;
+    for (let b = HIST_BINS; b > 0; b--) {
+      cumul += acc.hist[b - 1];
+      if (!found) {
+        hiSteps.push({ bin: b - 1, cumul });
+        if (cumul > target) { binHi = b - 1; found = true; }
+      }
+    }
+    f.histogram_spread = binHi > binLo ? (binHi - binLo) * 32 : 0;
+    f._spreadTrace = { binLo, binHi, target, loSteps, hiSteps };
+  }
+
+  /* Grid cell analysis */
+  {
+    const cellMean = new Uint8Array(GRID_CELLS);
+    const cellLvar = new Uint8Array(GRID_CELLS);
+    let occScore = 0, obsScore = 0, obsMask = 0, occMask = 0;
+    let cmSum = 0, cmSumsq = 0;
+
+    for (let ci = 0; ci < GRID_CELLS; ci++) {
+      if (acc.cellCount[ci] === 0) { cellMean[ci] = 0; continue; }
+      const cnt = acc.cellCount[ci];
+      cellMean[ci] = Math.floor(acc.cellSum[ci] / cnt);
+
+      const varBig = Math.floor(acc.cellSumsq[ci] / cnt) - cellMean[ci] * cellMean[ci];
+      let lvar8;
+      if (varBig <= 0) lvar8 = 0;
+      else { const v = varBig >> 8; lvar8 = v > 255 ? 255 : v; }
+      cellLvar[ci] = lvar8;
+
+      if (lvar8 < THR.CELL_LVAR) {
+        obsScore++; obsMask |= (1 << ci);
+        if (cellMean[ci] < (f.global_mean >> 1)) { occScore++; occMask |= (1 << ci); }
+      }
+      cmSum += cellMean[ci];
+      cmSumsq += cellMean[ci] * cellMean[ci];
+    }
+
+    f.occlusion_score = occScore;
+    f.obstruction_score = obsScore;
+    f._cellMean = cellMean;
+    f._cellLvar = cellLvar;
+    f._obsMask = obsMask;
+    f._occMask = occMask;
+
+    const cmVarNum = GRID_CELLS * cmSumsq - cmSum * cmSum;
+    const cmVar = Math.floor(cmVarNum / (GRID_CELLS * GRID_CELLS));
+    f.cell_mean_variance = cmVar > (255 << 6) ? 255 : (cmVar >> 6);
+  }
+
+  /* Dark-occlusion on the fine grid (EXPERIMENTAL demo — failed validation).
+     Flat-AND-dark test at fine resolution; fires on the vignette / dark road too,
+     so it is a demo only and not part of degradation.c / detector.py. */
+  {
+    let darkOcc = 0;
+    for (let fi = 0; fi < FINE_CELLS; fi++) {
+      const cnt = acc.fCount[fi];
+      if (cnt === 0) continue;
+      const m = Math.floor(acc.fSum[fi] / cnt);
+      const varBig = Math.floor(acc.fSumsq[fi] / cnt) - m * m;
+      let lvar8;
+      if (varBig <= 0) lvar8 = 0;
+      else { const v = varBig >> 8; lvar8 = v > 255 ? 255 : v; }
+      if (lvar8 < THR.CELL_LVAR && m < THR.DARK_ABS) darkOcc++;
+    }
+    f.dark_occlusion_cells = darkOcc;
+  }
+
+  return f;
+}
+
+/* classify_absolute() — degradation.c:48-86.
+   Returns {cls, clsName, conf, rules[]} where rules[] traces every
+   condition for the animation. */
+function classify(f) {
+  const lap = f.laplacian_var, ctr = f.global_contrast, spr = f.histogram_spread;
+  const mean = f.global_mean, obs = f.obstruction_score, cvar = f.cell_mean_variance;
+  const docc = f.dark_occlusion_cells;
+
+  const rules = [
+    {
+      name: "OBSTRUCTION", cls: 3, color: "var(--c-obst)",
+      desc: "flat cells at any brightness + spatially non-uniform frame",
+      conds: [
+        { c: "obstruction_score", op: "≥", thr: THR.OBS_CELLS, thrName: "DEGR_THR_OBS_CELLS", val: obs, pass: obs >= THR.OBS_CELLS },
+        { c: "cell_mean_variance", op: "≥", thr: THR.CELLVAR_LOCAL, thrName: "DEGR_THR_CELLVAR_LOCAL", val: cvar, pass: cvar >= THR.CELLVAR_LOCAL }
+      ],
+      conf: () => u8clamp((obs - THR.OBS_CELLS + 1) * 50 + (cvar - THR.CELLVAR_LOCAL) * 2),
+      confExpr: () => `conf = (obs−${THR.OBS_CELLS}+1)×50 + (cvar−${THR.CELLVAR_LOCAL})×2 = (${obs}−${THR.OBS_CELLS}+1)×50 + (${cvar}−${THR.CELLVAR_LOCAL})×2`
+    },
+    {
+      name: "OBSTRUCTION · dark occlusion", cls: 3, color: "var(--c-obst)", proto: true,
+      desc: "EXPERIMENTAL · failed dataset validation (fires on the fisheye vignette / vehicle body / dark road too): enough fine 8×6 subcells are flat AND absolutely dark. Demo only — NOT in degradation.c",
+      conds: [
+        { c: "dark_occlusion_cells", op: "≥", thr: THR.DARK_OCC_CELLS, thrName: "THR_DARK_OCC_CELLS", val: docc, pass: docc >= THR.DARK_OCC_CELLS }
+      ],
+      conf: () => u8clamp(docc * 16),
+      confExpr: () => `conf = dark_occlusion_cells×16 = ${docc}×16`
+    },
+    {
+      name: "FROST", cls: 2, color: "var(--c-frost)",
+      desc: "severe optical-path blur + scene has light + uniform",
+      conds: [
+        { c: "laplacian_var", op: "<", thr: THR.LAP_FROST, thrName: "DEGR_THR_LAP_FROST", val: lap, pass: lap < THR.LAP_FROST },
+        { c: "global_mean", op: ">", thr: THR.MEAN_BRIGHT, thrName: "DEGR_THR_MEAN_BRIGHT", val: mean, pass: mean > THR.MEAN_BRIGHT },
+        { c: "cell_mean_variance", op: "<", thr: THR.CELLVAR_UNIFORM, thrName: "DEGR_THR_CELLVAR_UNIFORM", val: cvar, pass: cvar < THR.CELLVAR_UNIFORM }
+      ],
+      conf: () => u8clamp((THR.LAP_BLUR - lap) * 10),
+      confExpr: () => `conf = (${THR.LAP_BLUR}−lap)×10 = (${THR.LAP_BLUR}−${lap})×10`
+    },
+    {
+      name: "FOG", cls: 1, color: "var(--c-fog)",
+      desc: "low contrast + blurry + compressed histogram + uniform + not dark",
+      conds: [
+        { c: "global_contrast", op: "<", thr: THR.CONTRAST_LOW, thrName: "DEGR_THR_CONTRAST_LOW", val: ctr, pass: ctr < THR.CONTRAST_LOW },
+        { c: "laplacian_var", op: "<", thr: THR.LAP_BLUR, thrName: "DEGR_THR_LAP_BLUR", val: lap, pass: lap < THR.LAP_BLUR },
+        { c: "histogram_spread", op: "<", thr: THR.SPREAD_FOG, thrName: "DEGR_THR_SPREAD_FOG", val: spr, pass: spr < THR.SPREAD_FOG },
+        { c: "cell_mean_variance", op: "<", thr: THR.CELLVAR_UNIFORM, thrName: "DEGR_THR_CELLVAR_UNIFORM", val: cvar, pass: cvar < THR.CELLVAR_UNIFORM },
+        { c: "global_mean", op: ">", thr: THR.MEAN_FLOOR, thrName: "DEGR_THR_MEAN_FLOOR", val: mean, pass: mean > THR.MEAN_FLOOR }
+      ],
+      conf: () => u8clamp((THR.CONTRAST_LOW - ctr) * 6),
+      confExpr: () => `conf = (${THR.CONTRAST_LOW}−ctr)×6 = (${THR.CONTRAST_LOW}−${ctr})×6`
+    },
+    {
+      name: "CLEAN", cls: 0, color: "var(--c-clean)",
+      desc: "no rule fired — the frame looks healthy",
+      conds: [],
+      conf: () => 0,
+      confExpr: () => "conf = 0"
+    }
+  ];
+
+  let fired = null;
+  for (const r of rules) {
+    r.allPass = r.conds.length === 0 || r.conds.every(c => c.pass);
+    if (!fired && r.allPass) { fired = r; r.fired = true; }
+    else if (fired) r.skipped = true;
+  }
+  return { cls: fired.cls, clsName: fired.name, conf: fired.conf(), rules, firedRule: fired };
+}
+
+/* Full single-frame run: everything the animation needs, computed up front */
+function runPipeline(gray) {
+  const acc = newAcc();
+  for (const y of sampleRows()) scanRow(gray, y, acc, null);
+  const th = computeThumb(gray, null);
+  const f = deriveFeatures(acc);
+  /* first frame temporal: mad_fast = ema_update(0, raw, 4) = raw ;
+     temporal_mad_var = |raw − (0>>4)| = raw — degradation.c:363-379 */
+  f.temporal_mad = th.rawMad;
+  f.temporal_mad_var = th.rawMad;
+  const cls = classify(f);
+  return { acc, thumb: th, features: f, result: cls };
+}
+
+/* ---------- deterministic demo scenes (pure integer, mirrored in the
+   C equivalence driver — keep formulas in sync) ---------- */
+function demoPixel(name, x, y) {
+  switch (name) {
+    case "clean": {           /* 18-px checker tiles, jittered brightness */
+      const tx = Math.floor(x / 18), ty = Math.floor(y / 18);
+      const j = (tx * 73 + ty * 151) & 31;
+      return ((tx + ty) & 1) ? 210 + j : 90 + j;
+    }
+    case "fog":                /* soft gray ramp + sparse speckle (keeps
+                                  laplacian_var in the 5..14 "moderate blur"
+                                  band — a linear dither would cancel under
+                                  the 5-point stencil) */
+      return 118 + (((x * 3 + y * 5) >> 4) & 7)
+                 + (((x * 13 + y * 29) % 31) === 0 ? 16 : 0);
+    case "frost":              /* bright, ultra-smooth glow */
+      return 170 + ((x * x) >> 12) + ((y * y) >> 12);
+    case "obstruction": {      /* checker + flat dark blob over 4 cells */
+      if (x < 168 && y < 168) return 15;
+      const tx = Math.floor(x / 18), ty = Math.floor(y / 18);
+      const j = (tx * 73 + ty * 151) & 31;
+      return ((tx + ty) & 1) ? 210 + j : 90 + j;
+    }
+  }
+  return 0;
+}
+function demoFrame(name) {
+  const g = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++)
+      g[y * W + x] = demoPixel(name, x, y) & 255;
+  return g;
+}
+/*ENGINE-END*/
+
+/* =====================================================================
+   UI + ANIMATION
+   ===================================================================== */
+
+const $ = id => document.getElementById(id);
+const CLASS_COLORS = { CLEAN: "var(--c-clean)", FOG: "var(--c-fog)", FROST: "var(--c-frost)", OBSTRUCTION: "var(--c-obst)", UNKNOWN: "var(--c-unk)" };
+
+const state = {
+  gray: null,          // Uint8Array W*H — the frame the detector sees (noise applied)
+  cleanGray: null,     // noise-free decoded grayscale, kept so σ can be re-applied
+  colorCanvas: null,   // offscreen canvas with the cropped colour input
+  isUpload: false,     // demos are the verified reference → never get sensor noise
+  noiseSigma: 2,       // simulated 8-bit sensor read-noise floor (upload path only)
+  pipe: null,          // full precomputed result of runPipeline
+  stageIdx: -1,
+  playing: false,
+  speed: 1,
+  loaded: false
+};
+
+/* Deterministic Gaussian sensor-noise floor (Box–Muller over a seeded LCG).
+   A downsampled still has a zero noise floor; the real 320×240 sensor the
+   thresholds were tuned on never does. Because laplacian_var is a mean-square
+   of neighbour differences, even σ=2 lifts perfectly smooth regions out of the
+   FROST-only band — which is exactly where bilinear-downsampled clean photos
+   land. Seeded so a given image always classifies identically. */
+function applySensorNoise(clean, sigma) {
+  if (!sigma) return clean.slice();
+  const out = new Uint8Array(clean.length);
+  let seed = 0x1a2b3c4d;
+  const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let i = 0; i < clean.length; i++) {
+    const n = Math.sqrt(-2 * Math.log(rnd() + 1e-9)) * Math.cos(6.283185307 * rnd()) * sigma;
+    let v = Math.round(clean[i] + n);
+    out[i] = v < 0 ? 0 : v > 255 ? 255 : v;
+  }
+  return out;
+}
+
+const STAGE_IDS = ["gray", "scan", "thumb", "derive", "classify", "verdict"];
+const STAGE_LABELS = ["Grayscale", "Scan", "Thumbnail", "Features", "Decision", "Result"];
+const SECTIONS = { gray: "sec-gray", scan: "sec-scan", thumb: "sec-thumb", derive: "sec-derive", classify: "sec-classify", verdict: "sec-verdict" };
+
+/* ---------- stepper ---------- */
+const stepperEl = $("stepper");
+STAGE_IDS.forEach((id, i) => {
+  const chip = document.createElement("div");
+  chip.className = "step-chip"; chip.dataset.i = i;
+  chip.innerHTML = `<span class="idx">${i + 1}</span>${STAGE_LABELS[i]}`;
+  chip.onclick = () => { if (state.loaded) jumpToStage(i); };
+  stepperEl.appendChild(chip);
+});
+function refreshStepper() {
+  [...stepperEl.children].forEach((c, i) => {
+    c.classList.toggle("cur", i === state.stageIdx);
+    c.classList.toggle("done", i < state.stageIdx);
+  });
+  STAGE_IDS.forEach((id, i) => {
+    const sec = $(SECTIONS[id]);
+    sec.classList.toggle("active", i === state.stageIdx);
+    sec.classList.toggle("done", i < state.stageIdx);
+  });
+}
+
+/* ---------- histogram DOM ---------- */
+const histEl = $("hist"), histLabelsEl = $("histLabels");
+const histBars = [];
+for (let b = 0; b < HIST_BINS; b++) {
+  const w = document.createElement("div"); w.className = "hbarw";
+  const bar = document.createElement("div"); bar.className = "hbar";
+  w.appendChild(bar); histEl.appendChild(w); histBars.push({ w, bar });
+  const lb = document.createElement("span"); lb.textContent = b * 32; histLabelsEl.appendChild(lb);
+}
+function renderHist(hist) {
+  let mx = 1;
+  for (let b = 0; b < HIST_BINS; b++) if (hist[b] > mx) mx = hist[b];
+  for (let b = 0; b < HIST_BINS; b++) {
+    histBars[b].bar.style.height = (hist[b] / mx * 100) + "%";
+    histBars[b].bar.title = hist[b];
+  }
+}
+function clearHistWalk() {
+  histBars.forEach(({ w }) => w.classList.remove("walk-lo", "walk-hi", "pct"));
+  $("histWalkMsg").textContent = "";
+}
+
+/* ---------- canvases ---------- */
+const ctxOrig = $("cvOrig").getContext("2d");
+const ctxGrayAnim = $("cvGrayAnim").getContext("2d");
+const ctxScanBase = $("cvScanBase").getContext("2d");
+const ctxScanOvl = $("cvScanOvl").getContext("2d");
+const ctxHeat = $("cvHeat").getContext("2d");
+const ctxGrid = $("cvGrid").getContext("2d");
+const ctxThumb = $("cvThumb").getContext("2d");
+
+let grayImageData = null;   // ImageData of the grayscale frame
+
+function grayToImageData(gray) {
+  const img = new ImageData(W, H);
+  for (let i = 0; i < W * H; i++) {
+    const v = gray[i];
+    img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+  }
+  return img;
+}
+
+/* heat colormap: 0 → dark navy → blue → cyan → yellow → white */
+function heatColor(v) {
+  const stops = [
+    [0, 11, 16, 32], [64, 20, 74, 124], [128, 34, 177, 196], [192, 242, 227, 76], [255, 255, 255, 255]
+  ];
+  for (let i = 1; i < stops.length; i++) {
+    if (v <= stops[i][0]) {
+      const [v0, r0, g0, b0] = stops[i - 1], [v1, r1, g1, b1] = stops[i];
+      const t = (v - v0) / (v1 - v0);
+      return [r0 + (r1 - r0) * t | 0, g0 + (g1 - g0) * t | 0, b0 + (b1 - b0) * t | 0];
+    }
+  }
+  return [255, 255, 255];
+}
+
+/* ---------- feature cards ---------- */
+const FEATURE_DEFS = [
+  { key: "laplacian_var", desc: "Mean-square of the clamped 3×3 Laplacian — sharpness. Collapses to ~0 when the optical path is blurred.",
+    formula: f => `(Σ|lap|² / n) ≫ 4 = (${state.pipe.acc.lapSumsq} / ${state.pipe.acc.lapCount}) ≫ 4 = <b>${f.laplacian_var}</b>`,
+    max: 255, ticks: [{ v: THR.LAP_FROST, cls: "t2" }, { v: THR.LAP_BLUR, cls: "" }],
+    tickLeg: `<span class="r">▎5 frost</span> · <span class="w">▎15 blur</span>` },
+  { key: "global_contrast", desc: "Michelson contrast from the global min/max of all samples.",
+    formula: f => `(max−min)·256/(max+min+1) = (${state.pipe.acc.max}−${state.pipe.acc.min})·256/(${state.pipe.acc.max}+${state.pipe.acc.min}+1) = <b>${f.global_contrast}</b>`,
+    max: 255, ticks: [{ v: THR.CONTRAST_LOW, cls: "" }],
+    tickLeg: `<span class="w">▎40 fog threshold</span>` },
+  { key: "global_mean", desc: "Average brightness of all stride-4 samples.",
+    formula: f => `Σp / n = ${state.pipe.acc.sum} / ${state.pipe.acc.count} = <b>${f.global_mean}</b>`,
+    max: 255, ticks: [{ v: THR.MEAN_FLOOR, cls: "t2" }, { v: THR.MEAN_BRIGHT, cls: "" }],
+    tickLeg: `<span class="r">▎40 darkness floor</span> · <span class="w">▎60 frost min</span>` },
+  { key: "histogram_spread", desc: "5th–95th percentile span of the 8-bin histogram × 32 — dynamic range.",
+    formula: f => `(bin_hi − bin_lo)·32 = (${f._spreadTrace.binHi} − ${f._spreadTrace.binLo})·32 = <b>${f.histogram_spread}</b>`,
+    max: 224, ticks: [{ v: THR.SPREAD_FOG, cls: "" }, { v: THR.SPREAD_FROST, cls: "t2" }],
+    tickLeg: `<span class="w">▎96 fog</span> · <span class="r">▎128 frost</span>`, walk: true },
+  { key: "cell_mean_variance", desc: "Variance of the 12 grid-cell means — spatial non-uniformity of the frame.",
+    formula: f => `((12·Σm² − (Σm)²)/144) ≫ 6 = <b>${f.cell_mean_variance}</b>`,
+    max: 255, ticks: [{ v: THR.CELLVAR_UNIFORM, cls: "" }, { v: THR.CELLVAR_LOCAL, cls: "t2" }],
+    tickLeg: `<span class="w">▎50 uniform</span> · <span class="r">▎60 localised</span>` },
+  { key: "obstruction_score", desc: "Grid cells with internal variance ≫8 below 8 — flat at any brightness.",
+    formula: f => `cells with lvar8 &lt; ${THR.CELL_LVAR} → <b>${f.obstruction_score}</b> of 12`,
+    max: 12, ticks: [{ v: THR.OBS_CELLS, cls: "t2" }],
+    tickLeg: `<span class="r">▎3 obstruction threshold</span>` },
+  { key: "occlusion_score", desc: "Flat cells that are also darker than half the global mean — the dirt/mud signature (diagnostic only).",
+    formula: f => `flat AND mean &lt; ${state.pipe.features.global_mean >> 1} (global_mean≫1) → <b>${f.occlusion_score}</b> of 12`,
+    max: 12, ticks: [{ v: THR.OCC_CELLS, cls: "" }],
+    tickLeg: `<span class="w">▎2 diagnostic ref</span>` },
+  { key: "dark_occlusion_cells", proto: true, desc: "EXPERIMENTAL · failed dataset validation: fine 8×6 subcells that are flat AND absolutely dark (&lt;40). Catches broad soft-edged mud, but also the fisheye vignette / vehicle body / dark road (≈22% false positives on clean frames) — demo only, not in degradation.c.",
+    formula: f => `flat AND mean &lt; ${THR.DARK_ABS} on an 8×6 grid → <b>${f.dark_occlusion_cells}</b> of 48`,
+    max: 48, ticks: [{ v: THR.DARK_OCC_CELLS, cls: "t2" }],
+    tickLeg: `<span class="r">▎4 → OBSTRUCTION</span>` },
+  { key: "temporal_mad", temporal: true, desc: "Fast-EMA of inter-frame thumbnail MAD. Needs video — first frame compares against the zero-initialised thumbnail.",
+    formula: f => `mad_fast after 1 frame = raw_mad = <b>${f.temporal_mad}</b>`, max: 255, ticks: [], tickLeg: "single image — not meaningful" },
+  { key: "temporal_mad_var", temporal: true, desc: "Instantaneous deviation of raw MAD from its fast EMA — motion variability. Needs video.",
+    formula: f => `|raw_mad − ema_raw| = <b>${f.temporal_mad_var}</b>`, max: 255, ticks: [], tickLeg: "single image — not meaningful" }
+];
+
+function buildFeatureCards() {
+  const g = $("fgrid"); g.innerHTML = "";
+  FEATURE_DEFS.forEach(def => {
+    const card = document.createElement("div");
+    card.className = "fcard" + (def.temporal ? " temporal" : "");
+    card.id = "fc-" + def.key;
+    const ticksHtml = def.ticks.map(t =>
+      `<div class="tick ${t.cls}" style="left:${(t.v / def.max * 100).toFixed(1)}%"></div>`).join("");
+    card.innerHTML = `
+      <div class="fname">${def.key}</div>
+      <div class="fdesc">${def.desc}</div>
+      <div class="fformula" id="ff-${def.key}">…</div>
+      ${def.walk ? '<div class="hist mini" id="mhist"></div><div class="hwalk-msg" id="mhistMsg"></div>' : ""}
+      <div class="fval-row"><span class="fval" id="fv-${def.key}">0</span><span class="funit">/ ${def.max}</span></div>
+      <div class="fbar"><div class="fill" id="fb-${def.key}"></div>${ticksHtml}</div>
+      <div class="fticks-leg">${def.tickLeg}</div>`;
+    g.appendChild(card);
+  });
+  /* populate the in-card mini histogram (replays the percentile walk) */
+  const mh = $("mhist");
+  if (mh && state.pipe) {
+    const hist = state.pipe.acc.hist;
+    let mx = 1;
+    for (let b = 0; b < HIST_BINS; b++) if (hist[b] > mx) mx = hist[b];
+    for (let b = 0; b < HIST_BINS; b++) {
+      const w = document.createElement("div"); w.className = "hbarw";
+      const bar = document.createElement("div"); bar.className = "hbar";
+      bar.style.height = (hist[b] / mx * 100) + "%"; bar.title = hist[b];
+      w.appendChild(bar); mh.appendChild(w);
+    }
+  }
+}
+
+/* ---------- decision-tree cards ---------- */
+function buildRuleCards(rules) {
+  const wrap = $("rules"); wrap.innerHTML = "";
+  rules.forEach((r, i) => {
+    const div = document.createElement("div");
+    div.className = "rule"; div.id = "rule-" + i;
+    const condsHtml = r.conds.length
+      ? r.conds.map((c, j) =>
+          `<span class="cond" id="cond-${i}-${j}" title="${c.thrName}">${c.c} <span class="val">(${c.val})</span> ${c.op} ${c.thr}</span>`
+        ).join(`<span class="and-sep">AND</span>`)
+      : `<span class="cond eval pass" style="opacity:1">default — reached only if every rule above rejected</span>`;
+    div.innerHTML = `
+      <div class="rule-head">
+        <span class="rule-pri">${i + 1}.</span>
+        <span class="rule-name" style="color:${r.color}">${r.name}</span>
+        <span class="rule-status" id="rstat-${i}"></span>
+      </div>
+      <div class="conds">${condsHtml}</div>
+      <div class="rule-conf" id="rconf-${i}"></div>`;
+    wrap.appendChild(div);
+  });
+}
+
+/* ---------- verdict ---------- */
+function renderVerdict() {
+  const { features: f, result: r, acc } = state.pipe;
+  $("verdict-wrap").style.display = "block";
+  const col = CLASS_COLORS[r.clsName];
+  $("vClass").textContent = `${r.clsName} (${r.cls})`;
+  $("vClass").style.color = col;
+  $("verdictBadge").style.borderColor = col;
+  $("vConfFill").style.width = (r.conf / 255 * 100) + "%";
+  $("vConfFill").style.background = col;
+  $("vConfNum").textContent = `${r.conf} / 255`;
+
+  const rows = [
+    ["laplacian_var", f.laplacian_var], ["global_contrast", f.global_contrast],
+    ["histogram_spread", f.histogram_spread], ["global_mean", f.global_mean],
+    ["occlusion_score", f.occlusion_score], ["obstruction_score", f.obstruction_score],
+    ["cell_mean_variance", f.cell_mean_variance],
+    ["temporal_mad †", f.temporal_mad], ["temporal_mad_var †", f.temporal_mad_var],
+    ["cell_obs_mask", "0b" + f._obsMask.toString(2).padStart(12, "0")],
+    ["cell_occ_mask", "0b" + f._occMask.toString(2).padStart(12, "0")],
+    ["samples", acc.count]
+  ];
+  $("vTable").innerHTML =
+    `<tr><th>field</th><th>value</th></tr>` +
+    rows.map(([k, v]) =>
+      `<tr class="${k.includes("†") ? "temporal" : ""}"><td class="mono">${k}</td><td class="mono">${v}</td></tr>`).join("");
+
+  const cg = $("vCells"); cg.innerHTML = "";
+  for (let ci = 0; ci < GRID_CELLS; ci++) {
+    const flat = (f._obsMask >> ci) & 1, dark = (f._occMask >> ci) & 1;
+    const box = document.createElement("div");
+    box.className = "cellbox" + (dark ? " dark" : flat ? " flat" : "");
+    box.innerHTML = `<div class="ci">cell ${ci}</div><div class="cm">${f._cellMean[ci]}</div>
+      <div class="cv">lvar ${f._cellLvar[ci]}</div>
+      ${dark ? '<span class="tag occ">OCC</span>' : flat ? '<span class="tag obs">OBS</span>' : ""}`;
+    cg.appendChild(box);
+  }
+
+  $("hystNote").innerHTML =
+    `<b>Hysteresis (live video only):</b> this is <code>raw_classification</code> — what this single frame says on its own.
+     On a stream, a non-CLEAN class must persist for <b>${5}</b> consecutive frames before
+     <code>result.classification</code> reports it, and <b>${15}</b> consecutive CLEAN frames to clear
+     (degradation.c:446-477). ${r.clsName !== "CLEAN"
+       ? `At 10 Hz this ${r.clsName} verdict would be confirmed after 0.5 s.` : ""}
+     † temporal metrics need a previous frame; UNKNOWN (enum 4) is reserved and never emitted by the absolute classifier.`;
+}
+
+/* =====================================================================
+   STAGE ANIMATIONS
+   Each stage: enter() → tick(dt) returns true when finished → finish()
+   (finish() must be idempotent and produce the complete final state).
+   ===================================================================== */
+
+let anim = null;  // current stage animation object
+
+function resetAllVisuals() {
+  ctxGrayAnim.clearRect(0, 0, W, H);
+  ctxScanBase.clearRect(0, 0, W, H);
+  ctxScanOvl.clearRect(0, 0, W, H);
+  ctxHeat.fillStyle = "#0b1020"; ctxHeat.fillRect(0, 0, W, H);
+  ctxGrid.fillStyle = "#0b1020"; ctxGrid.fillRect(0, 0, W, H);
+  ctxThumb.clearRect(0, 0, THUMB_W, THUMB_H);
+  renderHist(new Uint32Array(HIST_BINS));
+  clearHistWalk();
+  $("gvCount").textContent = "0"; $("gvMin").textContent = "255"; $("gvMax").textContent = "0";
+  $("gvMean").textContent = "—";
+  $("scanProg").textContent = "row —/— · 0 samples";
+  ["kU","kD","kL","kR","kC"].forEach(id => $(id).textContent = "—");
+  $("kmath").innerHTML = "lap = 4·p − up − down − left − right<br>|lap| clamped to 255, then squared";
+  ["tvMadSum","tvRawMad","tvMad","tvMadVar"].forEach(id => $(id).textContent = "—");
+  buildFeatureCards();
+  buildRuleCards(state.pipe.result.rules);
+  $("verdict-wrap").style.display = "none";
+}
+
+/* ---------- stage 1: grayscale wipe ---------- */
+function makeGrayStage() {
+  const dur = 1300;
+  let t = 0;
+  const grayCanvas = document.createElement("canvas");
+  grayCanvas.width = W; grayCanvas.height = H;
+  grayCanvas.getContext("2d").putImageData(grayImageData, 0, 0);
+  function draw(prog) {
+    ctxGrayAnim.drawImage(state.colorCanvas, 0, 0);
+    const wpx = Math.round(W * prog);
+    if (wpx > 0) ctxGrayAnim.drawImage(grayCanvas, 0, 0, wpx, H, 0, 0, wpx, H);
+    if (prog < 1) {
+      ctxGrayAnim.fillStyle = "rgba(56,189,248,.9)";
+      ctxGrayAnim.fillRect(wpx - 1, 0, 2, H);
+    }
+  }
+  return {
+    enter() { ctxOrig.drawImage(state.colorCanvas, 0, 0); draw(0); },
+    tick(dt) { t += dt; draw(Math.min(1, t / dur)); return t >= dur; },
+    finish() { draw(1); }
+  };
+}
+
+/* ---------- stage 2: the scan ---------- */
+function makeScanStage() {
+  const rows = sampleRows();
+  const ROWS_PER_MS = rows.length / 2600;   // ~2.6 s at 1×
+  let acc = newAcc();
+  let rowF = 0, rowsDone = 0;
+  let lastSample = null;
+
+  const dotsCanvas = document.createElement("canvas");
+  dotsCanvas.width = W; dotsCanvas.height = H;
+  const dctx = dotsCanvas.getContext("2d");
+
+  function processRow(y) {
+    const out = [];
+    scanRow(state.gray, y, acc, out);
+    // stamp sample dots + heat blocks
+    dctx.fillStyle = "rgba(56,189,248,.75)";
+    for (const s of out) dctx.fillRect(s.x, s.y, 1, 1);
+    for (const s of out) {
+      const [r, g, b] = heatColor(s.lap);
+      ctxHeat.fillStyle = `rgb(${r},${g},${b})`;
+      ctxHeat.fillRect(s.x - 1, s.y - 1, STRIDE, STRIDE);
+    }
+    if (out.length) lastSample = out[out.length - 1];
+  }
+
+  function renderLive(curY) {
+    // base + dots + band
+    ctxScanBase.putImageData(grayImageData, 0, 0);
+    ctxScanBase.drawImage(dotsCanvas, 0, 0);
+    ctxScanOvl.clearRect(0, 0, W, H);
+    if (curY !== null) {
+      ctxScanOvl.fillStyle = "rgba(0,0,0,.55)";
+      ctxScanOvl.fillRect(0, curY + 2, W, H - curY - 2);
+      ctxScanOvl.fillStyle = "rgba(56,189,248,.85)";
+      ctxScanOvl.fillRect(0, curY, W, 1);
+    }
+    // grid cells: running means
+    ctxGrid.fillStyle = "#0b1020"; ctxGrid.fillRect(0, 0, W, H);
+    const cw = W / GRID_COLS, ch = H / GRID_ROWS;
+    for (let ci = 0; ci < GRID_CELLS; ci++) {
+      const col = ci % GRID_COLS, row = Math.floor(ci / GRID_COLS);
+      if (acc.cellCount[ci] > 0) {
+        const m = Math.floor(acc.cellSum[ci] / acc.cellCount[ci]);
+        ctxGrid.fillStyle = `rgb(${m},${m},${m})`;
+        ctxGrid.fillRect(col * cw + 1, row * ch + 1, cw - 2, ch - 2);
+        ctxGrid.fillStyle = m > 128 ? "#000" : "#fff";
+        ctxGrid.font = "13px monospace"; ctxGrid.textAlign = "center";
+        ctxGrid.fillText(m, col * cw + cw / 2, row * ch + ch / 2 + 4);
+      }
+      ctxGrid.strokeStyle = "#2e415f";
+      ctxGrid.strokeRect(col * cw + .5, row * ch + .5, cw - 1, ch - 1);
+    }
+    // panels
+    $("gvCount").textContent = acc.count;
+    $("gvMin").textContent = acc.min; $("gvMax").textContent = acc.max;
+    const mean = acc.count ? Math.floor(acc.sum / acc.count) : 0;
+    $("gvMean").textContent = acc.count ? mean : "—";
+    $("rmMin").style.left = (acc.min / 255 * 100) + "%";
+    $("rmMax").style.left = (acc.max / 255 * 100) + "%";
+    $("rmMean").style.left = (mean / 255 * 100) + "%";
+    renderHist(acc.hist);
+    $("scanProg").innerHTML = `row <b>${rowsDone}</b>/${rows.length} · <b>${acc.count}</b> samples · 1 px dot = 1 stride-4 sample`;
+    if (lastSample) {
+      const { x, y, p } = lastSample;
+      const up = state.gray[(y - 1) * W + x], dn = state.gray[(y + 1) * W + x];
+      const lf = state.gray[y * W + x - 1], rt = state.gray[y * W + x + 1];
+      let lap = 4 * p - up - dn - lf - rt;
+      const raw = lap; if (lap < 0) lap = -lap; if (lap > 255) lap = 255;
+      $("kU").textContent = up; $("kD").textContent = dn;
+      $("kL").textContent = lf; $("kR").textContent = rt; $("kC").textContent = p;
+      $("kmath").innerHTML = `sample (${x},${y})<br>lap = 4·${p} −${up} −${dn} −${lf} −${rt} = <b>${raw}</b><br>|lap|→${lap} · +${lap}·${lap} to Σ`;
+    }
+  }
+
+  return {
+    enter() { renderLive(rows[0]); },
+    tick(dt) {
+      rowF += dt * ROWS_PER_MS;
+      while (rowsDone < rows.length && rowsDone < Math.floor(rowF)) {
+        processRow(rows[rowsDone]); rowsDone++;
+      }
+      const done = rowsDone >= rows.length;
+      renderLive(done ? null : rows[Math.min(rowsDone, rows.length - 1)]);
+      return done;
+    },
+    finish() {
+      while (rowsDone < rows.length) { processRow(rows[rowsDone]); rowsDone++; }
+      renderLive(null);
+    }
+  };
+}
+
+/* ---------- stage 3: thumbnail ---------- */
+function makeThumbStage() {
+  const dur = 1300;
+  let t = 0;
+  const th = state.pipe.thumb;
+  const img = ctxThumb.createImageData(THUMB_W, THUMB_H);
+  function draw(prog) {
+    const n = Math.min(THUMB_PIXELS, Math.ceil(prog * THUMB_PIXELS));
+    for (let i = 0; i < n; i++) {
+      const v = th.thumb[i];
+      img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+    }
+    ctxThumb.putImageData(img, 0, 0);
+    if (prog >= 1) {
+      $("tvMadSum").textContent = th.madSum;
+      $("tvRawMad").textContent = th.rawMad;
+      $("tvMad").textContent = state.pipe.features.temporal_mad + " (= raw on frame 1)";
+      $("tvMadVar").textContent = state.pipe.features.temporal_mad_var;
+    }
+  }
+  return {
+    enter() { draw(0); },
+    tick(dt) { t += dt; draw(Math.min(1, t / dur)); return t >= dur; },
+    finish() { draw(1); }
+  };
+}
+
+/* ---------- stage 4: feature cards ---------- */
+function makeDeriveStage() {
+  const CARD_GAP = 480, COUNT_DUR = 380, WALK_STEP = 230;
+  const f = state.pipe.features;
+  const trace = f._spreadTrace;
+  const walkLen = (trace.loSteps.length + trace.hiSteps.length) * WALK_STEP + WALK_STEP;
+  let t = 0;
+  // schedule: card i starts at i*CARD_GAP; spread card additionally drives the walk
+  const spreadIdx = FEATURE_DEFS.findIndex(d => d.walk);
+  const total = (FEATURE_DEFS.length - 1) * CARD_GAP + COUNT_DUR + walkLen;
+
+  function applyCard(def, prog) {
+    const card = $("fc-" + def.key);
+    if (prog <= 0) return;
+    card.classList.add("on");
+    const val = f[def.key];
+    const shown = prog >= 1 ? val : Math.round(val * prog);
+    $("fv-" + def.key).textContent = shown;
+    $("fb-" + def.key).style.width = (Math.min(1, shown / def.max) * 100) + "%";
+    if (prog >= 1) $("ff-" + def.key).innerHTML = def.formula(f);
+  }
+  function applyWalk(wt) {
+    const mh = $("mhist");
+    if (wt <= 0 || !mh) return;
+    const bars = [...mh.children];
+    bars.forEach(w => w.classList.remove("walk-lo", "walk-hi", "pct"));
+    const steps = Math.floor(wt / WALK_STEP);
+    const lo = trace.loSteps, hi = trace.hiSteps;
+    let msg = "";
+    for (let i = 0; i < Math.min(steps, lo.length); i++) {
+      bars[lo[i].bin].classList.add("walk-lo");
+      msg = `↑ from bin 0: cumul ${lo[i].cumul} vs target ${trace.target}`;
+    }
+    if (steps >= lo.length) {
+      bars[trace.binLo].classList.add("pct");
+      const hSteps = steps - lo.length;
+      for (let i = 0; i < Math.min(hSteps, hi.length); i++) {
+        bars[hi[i].bin].classList.add("walk-hi");
+        msg = `↓ from bin 7: cumul ${hi[i].cumul} vs target ${trace.target}`;
+      }
+      if (hSteps >= hi.length) {
+        bars[trace.binHi].classList.add("pct");
+        msg = `bin_lo=${trace.binLo}, bin_hi=${trace.binHi} → spread = (${trace.binHi}−${trace.binLo})·32 = ${f.histogram_spread}`;
+      }
+    }
+    $("mhistMsg").textContent = msg;
+  }
+  function render() {
+    FEATURE_DEFS.forEach((def, i) => {
+      const start = i * CARD_GAP;
+      applyCard(def, (t - start) / COUNT_DUR);
+    });
+    applyWalk(t - spreadIdx * CARD_GAP);
+  }
+  return {
+    enter() { render(); },
+    tick(dt) { t += dt; render(); return t >= total; },
+    finish() { t = total; render(); }
+  };
+}
+
+/* ---------- stage 5: decision tree ---------- */
+function makeClassifyStage() {
+  const CHIP_MS = 260, RULE_PAUSE = 420;
+  const rules = state.pipe.result.rules;
+  // build a flat schedule of events
+  const events = [];
+  let tt = 0;
+  let stopped = false;
+  rules.forEach((r, i) => {
+    if (stopped) { events.push({ t: tt, type: "skip", i }); return; }
+    events.push({ t: tt, type: "show", i }); tt += RULE_PAUSE * 0.6;
+    for (let j = 0; j < r.conds.length; j++) {
+      events.push({ t: tt, type: "cond", i, j }); tt += CHIP_MS;
+      if (!r.conds[j].pass) break;               // short-circuit like C's &&
+    }
+    events.push({ t: tt, type: "verdict", i }); tt += RULE_PAUSE;
+    if (r.fired) stopped = true;
+  });
+  const total = tt + 200;
+  let t = 0;
+
+  function apply() {
+    for (const ev of events) {
+      if (ev.t > t) continue;
+      const r = rules[ev.i], div = $("rule-" + ev.i);
+      if (ev.type === "show") div.classList.add("on");
+      else if (ev.type === "skip") { div.classList.add("on", "skipped"); $("rstat-" + ev.i).textContent = "skipped — earlier rule fired"; }
+      else if (ev.type === "cond") {
+        const chip = $("cond-" + ev.i + "-" + ev.j);
+        chip.classList.add("eval", r.conds[ev.j].pass ? "pass" : "fail");
+      } else if (ev.type === "verdict") {
+        const st = $("rstat-" + ev.i);
+        if (r.fired) {
+          div.classList.add("fired"); div.style.borderColor = r.color;
+          st.textContent = "✔ FIRED — return " + r.name; st.className = "rule-status fire";
+          $("rconf-" + ev.i).innerHTML = r.confExpr() + " → clamped to <b>" + r.conf() + "</b>";
+        } else {
+          div.classList.add("rejected");
+          st.textContent = "✘ rejected"; st.className = "rule-status rej";
+        }
+      }
+    }
+  }
+  return {
+    enter() { apply(); },
+    tick(dt) { t += dt; apply(); return t >= total; },
+    finish() { t = total; apply(); }
+  };
+}
+
+/* ---------- stage 6: verdict ---------- */
+function makeVerdictStage() {
+  let t = 0;
+  return {
+    enter() { renderVerdict(); },
+    tick(dt) { t += dt; return t >= 400; },
+    finish() { renderVerdict(); }
+  };
+}
+
+const STAGE_FACTORIES = [makeGrayStage, makeScanStage, makeThumbStage, makeDeriveStage, makeClassifyStage, makeVerdictStage];
+
+/* =====================================================================
+   ANIMATION DRIVER
+   ===================================================================== */
+let rafId = null, prevTs = null;
+
+function startStage(i, autoplay) {
+  state.stageIdx = i;
+  anim = STAGE_FACTORIES[i]();
+  anim.enter();
+  refreshStepper();
+  if ($("chkScroll").checked) {
+    /* Scroll so the heading clears the sticky header. Measuring header height
+       each time keeps this correct no matter how the header wraps by width. */
+    const sec = $(SECTIONS[STAGE_IDS[i]]);
+    const headH = document.querySelector("header").offsetHeight;
+    const top = sec.getBoundingClientRect().top + window.scrollY - headH - 14;
+    window.scrollTo({ top: top < 0 ? 0 : top, behavior: "smooth" });
+  }
+  if (autoplay) setPlaying(true);
+}
+
+function advance() {
+  if (state.stageIdx < STAGE_IDS.length - 1) {
+    startStage(state.stageIdx + 1, true);
+  } else {
+    setPlaying(false);
+    refreshStepper();
+  }
+}
+
+function loop(ts) {
+  rafId = requestAnimationFrame(loop);
+  if (!state.playing || !anim) { prevTs = ts; return; }
+  const dt = prevTs === null ? 16 : Math.min(120, ts - prevTs);
+  prevTs = ts;
+  const done = anim.tick(dt * state.speed);
+  if (done) { anim.finish(); advance(); }
+}
+
+function setPlaying(p) {
+  state.playing = p;
+  $("btnPlay").textContent = p ? "⏸ Pause" : "▶ Play";
+}
+
+function jumpToStage(target) {
+  setPlaying(false);
+  resetAllVisuals();
+  for (let i = 0; i < target; i++) {
+    anim = STAGE_FACTORIES[i]();
+    anim.enter(); anim.finish();
+  }
+  startStage(target, true);
+}
+
+function restart() { jumpToStage(0); }
+
+/* =====================================================================
+   IMAGE LOADING
+   ===================================================================== */
+function loadGray(cleanGray, colorCanvas, sourceLabel, isUpload) {
+  state.cleanGray = cleanGray;
+  state.colorCanvas = colorCanvas;
+  state.isUpload = !!isUpload;
+  state.sourceLabel = sourceLabel;
+  $("dropzone").style.display = "none";
+  $("main").style.display = "block";
+  ["btnPlay", "btnSkip", "btnRestart"].forEach(id => $(id).disabled = false);
+  reprocess();          // applies σ (upload only), runs the pipeline, restarts the animation
+}
+
+/* Rebuild state.gray from the noise-free decode at the current σ, recompute the
+   whole pipeline, and restart. Demos are the C-verified reference, so they never
+   get noise regardless of the slider. */
+function reprocess() {
+  const sigma = state.isUpload ? state.noiseSigma : 0;
+  state.gray = applySensorNoise(state.cleanGray, sigma);
+  grayImageData = grayToImageData(state.gray);
+  state.pipe = runPipeline(state.gray);
+  state.loaded = true;
+  $("capOrig").textContent = state.sourceLabel;
+  $("noiseNote").innerHTML = state.isUpload
+    ? (sigma > 0
+        ? ` A simulated <b>σ=${sigma}</b> sensor read-noise floor is added here (real frames are never noise-free; a downsampled still is) — this is the frame the classifier scores.`
+        : ` <b>σ=0:</b> raw downsampled pixels, no sensor-noise floor — smooth clean photos may read FROST/FOG because their Laplacian collapses below the blur thresholds.`)
+    : " Demo scenes are the reference frames verified byte-identical to the compiled C; the σ control does not apply to them.";
+  // reflect whether the σ control is live for this source
+  $("noiseCtl").style.opacity = state.isUpload ? "1" : "0.4";
+  $("noiseSel").disabled = !state.isUpload;
+  restart();
+}
+
+function canvasFromGray(gray) {
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  c.getContext("2d").putImageData(grayToImageData(gray), 0, 0);
+  return c;
+}
+
+async function loadFile(file) {
+  let bmp;
+  try {
+    bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+  } catch (e) {
+    alert("Could not decode that file as an image."); return;
+  }
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const cx = c.getContext("2d");
+  const scale = Math.max(W / bmp.width, H / bmp.height);
+  const sw = W / scale, sh = H / scale;
+  const sx = (bmp.width - sw) / 2, sy = (bmp.height - sh) / 2;
+  cx.drawImage(bmp, sx, sy, sw, sh, 0, 0, W, H);
+  const d = cx.getImageData(0, 0, W, H).data;
+  const gray = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    gray[i] = (d[i * 4] * 4899 + d[i * 4 + 1] * 9617 + d[i * 4 + 2] * 1868 + 8192) >> 14;
+  }
+  loadGray(gray, c, `${file.name} — ${bmp.width}×${bmp.height} → cover-crop → 320×240`, true);
+  bmp.close();
+}
+
+function loadDemo(name) {
+  const gray = demoFrame(name);
+  loadGray(gray, canvasFromGray(gray), `synthetic demo scene: ${name} (already grayscale)`, false);
+}
+
+/* =====================================================================
+   WIRING
+   ===================================================================== */
+$("btnLoad").onclick = () => $("fileInput").click();
+$("dropzone").onclick = () => $("fileInput").click();
+$("fileInput").onchange = e => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ""; };
+
+document.querySelectorAll("[data-demo]").forEach(b => b.onclick = () => loadDemo(b.dataset.demo));
+
+$("btnPlay").onclick = () => setPlaying(!state.playing);
+$("btnSkip").onclick = () => { if (anim) { anim.finish(); advance(); } };
+$("btnRestart").onclick = restart;
+$("speedSel").onchange = e => { state.speed = parseFloat(e.target.value); };
+$("noiseSel").oninput = e => {
+  state.noiseSigma = parseInt(e.target.value, 10);
+  $("noiseVal").textContent = state.noiseSigma + " (u8)";
+  if (state.loaded && state.isUpload) reprocess();   // demos ignore σ
+};
+
+["dragenter", "dragover"].forEach(ev => document.body.addEventListener(ev, e => {
+  e.preventDefault(); document.body.classList.add("drag-anywhere");
+}));
+["dragleave", "drop"].forEach(ev => document.body.addEventListener(ev, e => {
+  e.preventDefault(); document.body.classList.remove("drag-anywhere");
+}));
+document.body.addEventListener("drop", e => {
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+
+rafId = requestAnimationFrame(loop);
+
+/* test hook: run the engine on all demo scenes, return JSON-able results
+   (used by the C-equivalence harness; harmless in normal use) */
+window.__equiv = function () {
+  const out = {};
+  for (const name of ["clean", "fog", "frost", "obstruction"]) {
+    const p = runPipeline(demoFrame(name));
+    const f = p.features;
+    out[name] = {
+      laplacian_var: f.laplacian_var, global_contrast: f.global_contrast,
+      histogram_spread: f.histogram_spread, global_mean: f.global_mean,
+      occlusion_score: f.occlusion_score, obstruction_score: f.obstruction_score,
+      cell_mean_variance: f.cell_mean_variance,
+      obs_mask: f._obsMask, occ_mask: f._occMask,
+      cell_mean: Array.from(f._cellMean),
+      raw_mad: p.thumb.rawMad,
+      raw_class: p.result.cls, confidence: p.result.conf
+    };
+  }
+  return out;
+};
+</script>
+</body>
+</html>

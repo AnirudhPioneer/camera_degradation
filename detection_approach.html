@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Camera Degradation Detection — Technical Design Document</title>
+<style>
+  :root {
+    --bg:        #0f1117;
+    --surface:   #1a1d27;
+    --border:    #2a2d3a;
+    --text:      #d4d8e8;
+    --muted:     #7a7f96;
+    --accent:    #5b8af0;
+    --clean:     #27c76a;
+    --fog:       #9aa5b4;
+    --frost:     #74b9ff;
+    --dirt:      #e07b39;
+    --obs:       #e05555;
+    --unknown:   #a070d0;
+    --warn:      #f0c040;
+    --code-bg:   #12141e;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+    padding: 0 0 80px;
+  }
+
+  /* ── Layout ── */
+  .page { max-width: 900px; margin: 0 auto; padding: 0 28px; }
+
+  /* ── Header ── */
+  header {
+    background: linear-gradient(135deg, #1a1d27 0%, #0f1117 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 48px 0 36px;
+    margin-bottom: 48px;
+  }
+  header .page { }
+  header h1 { font-size: 28px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+  header p  { color: var(--muted); font-size: 14px; }
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .5px;
+    margin: 4px 4px 0 0;
+    text-transform: uppercase;
+  }
+  .badge-c99    { background:#1e3a5f; color:#74b9ff; }
+  .badge-arm    { background:#1e3a2f; color:#27c76a; }
+  .badge-embed  { background:#3a1e1e; color:#e05555; }
+
+  /* ── ToC ── */
+  nav.toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px 28px;
+    margin-bottom: 48px;
+  }
+  nav.toc h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 14px; }
+  nav.toc ol { padding-left: 20px; }
+  nav.toc li { margin: 4px 0; }
+  nav.toc a  { color: var(--accent); text-decoration: none; font-size: 14px; }
+  nav.toc a:hover { text-decoration: underline; }
+  nav.toc ol ol { margin-top: 4px; }
+  nav.toc ol ol li { margin: 2px 0; }
+
+  /* ── Sections ── */
+  section { margin-bottom: 56px; }
+  h2 {
+    font-size: 20px;
+    font-weight: 700;
+    color: #fff;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+    margin-bottom: 24px;
+  }
+  h2 .section-num { color: var(--accent); margin-right: 10px; font-weight: 400; }
+  h3 {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--accent);
+    margin: 28px 0 12px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    font-size: 12px;
+  }
+  h4 { font-size: 14px; font-weight: 600; color: #fff; margin: 20px 0 8px; }
+  p  { margin-bottom: 14px; }
+
+  /* ── Code ── */
+  pre, code {
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+  }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #a8d8ff;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    margin: 16px 0;
+    line-height: 1.5;
+    color: #c8d8f0;
+  }
+  pre .kw  { color: #74b9ff; }
+  pre .cm  { color: #5a6070; font-style: italic; }
+  pre .num { color: #f0c040; }
+  pre .fn  { color: #a0e0a0; }
+
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 13.5px;
+  }
+  th {
+    background: var(--surface);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    font-size: 11px;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #1e2130;
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1e2130; }
+
+  /* ── Callout boxes ── */
+  .callout {
+    border-left: 3px solid;
+    border-radius: 0 6px 6px 0;
+    padding: 14px 18px;
+    margin: 20px 0;
+    font-size: 14px;
+  }
+  .callout-info    { border-color: var(--accent); background: #1a2040; }
+  .callout-warn    { border-color: var(--warn);   background: #2a2010; }
+  .callout-key     { border-color: var(--clean);  background: #0f2a1a; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout-title   { font-weight: 700; margin-bottom: 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+
+  /* ── Degradation class pills ── */
+  .pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+  }
+  .pill-clean   { background:#0d2a1a; color: var(--clean);   border:1px solid var(--clean); }
+  .pill-fog     { background:#1e2428; color: var(--fog);     border:1px solid var(--fog); }
+  .pill-frost   { background:#0d1e2e; color: var(--frost);   border:1px solid var(--frost); }
+  .pill-dirt    { background:#2a1a0a; color: var(--dirt);    border:1px solid var(--dirt); }
+  .pill-obs     { background:#2a0d0d; color: var(--obs);     border:1px solid var(--obs); }
+  .pill-unknown { background:#1a0d2a; color: var(--unknown); border:1px solid var(--unknown); }
+
+  /* ── Pipeline diagram ── */
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 20px 0;
+  }
+  .pipe-step {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+  }
+  .pipe-connector {
+    width: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .pipe-connector .line {
+    width: 2px;
+    flex: 1;
+    background: var(--border);
+    min-height: 12px;
+  }
+  .pipe-connector .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+  .pipe-box {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 4px 0;
+  }
+  .pipe-box .pipe-title { font-weight: 700; font-size: 13px; color: #fff; }
+  .pipe-box .pipe-out   { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .pipe-box .pipe-out span { color: #a8d8ff; font-family: monospace; }
+
+  /* ── Memory map ── */
+  .memmap {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 16px 0;
+    font-size: 12px;
+    font-family: monospace;
+  }
+  .memrow {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+  }
+  .memrow:last-child { border-bottom: none; }
+  .memaddr { width: 80px; padding: 8px 12px; color: var(--muted); background: var(--code-bg); flex-shrink: 0; }
+  .memsize { width: 70px; padding: 8px 10px; color: var(--warn); flex-shrink: 0; border-left: 1px solid var(--border); }
+  .memname { flex: 1; padding: 8px 12px; color: var(--text); border-left: 1px solid var(--border); }
+  .memtotal { background: #1e2a1e; }
+  .memtotal .memname { color: var(--clean); font-weight: 700; }
+
+  /* ── Feature comparison grid ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 16px 0;
+  }
+  .feature-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+  }
+  .feature-card h4 { margin: 0 0 8px; font-size: 13px; }
+  .feature-card ul { padding-left: 16px; font-size: 13px; color: var(--muted); }
+  .feature-card li { margin: 3px 0; }
+  .feature-card li span { color: var(--text); }
+
+  /* ── EMA diagram ── */
+  .ema-row {
+    display: flex;
+    gap: 12px;
+    margin: 12px 0;
+  }
+  .ema-box {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    text-align: center;
+  }
+  .ema-box .ema-label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 6px; }
+  .ema-box .ema-val   { font-size: 22px; font-weight: 700; font-family: monospace; }
+  .ema-box .ema-desc  { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .ema-fast { border-color: #5b8af0; }
+  .ema-fast .ema-val { color: #74b9ff; }
+  .ema-slow { border-color: #27c76a; }
+  .ema-slow .ema-val { color: #27c76a; }
+  .ema-ratio { border-color: var(--warn); }
+  .ema-ratio .ema-val { color: var(--warn); }
+
+  /* ── Decision tree ── */
+  .dtree {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 16px 0;
+  }
+  .dnode {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .dnode-num {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .dnode-body {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+  }
+  .dnode-class { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+  .dnode-conds { font-size: 13px; color: var(--muted); }
+  .dnode-conds code { font-size: 12px; }
+
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    padding-top: 40px;
+    border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="page">
+    <h1>Camera Degradation Detection</h1>
+    <p style="margin-bottom:14px">Technical Design Document — Detection approach, algorithm rationale, and code walkthrough</p>
+    <span class="badge badge-c99">C99</span>
+    <span class="badge badge-arm">ARM Cortex-M0</span>
+    <span class="badge badge-embed">Embedded / No FPU</span>
+  </div>
+</header>
+
+<div class="page">
+
+<nav class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#intro">Introduction &amp; Goals</a></li>
+    <li><a href="#what-we-detect">What We Detect and Why</a>
+      <ol>
+        <li><a href="#degradation-types">The Degradation Types</a></li>
+        <li><a href="#how-they-differ">How They Differ from Each Other</a></li>
+      </ol>
+    </li>
+    <li><a href="#pipeline">The Detection Pipeline</a>
+      <ol>
+        <li><a href="#single-pass">Single-Pass Design</a></li>
+        <li><a href="#stride">Step 1 — Spatial Subsampling (Stride 4)</a></li>
+        <li><a href="#laplacian">Step 2 — Laplacian Variance (Sharpness)</a></li>
+        <li><a href="#contrast">Step 3 — Michelson Contrast</a></li>
+        <li><a href="#histogram">Step 4 — Histogram Spread &amp; Global Mean</a></li>
+        <li><a href="#grid">Step 5 — Grid Cell Analysis (Occlusion &amp; Obstruction)</a></li>
+        <li><a href="#temporal">Step 6 — Temporal Thumbnail MAD</a></li>
+      </ol>
+    </li>
+    <li><a href="#baseline">Dual-Timescale Baseline System</a>
+      <ol>
+        <li><a href="#ema">Exponential Moving Averages</a></li>
+        <li><a href="#ratio">The Ratio — What 128 Means</a></li>
+        <li><a href="#slow-freeze">Slow EMA Freeze</a></li>
+        <li><a href="#warmup">Startup Warmup</a></li>
+      </ol>
+    </li>
+    <li><a href="#classifier">Classification — The Decision Tree</a></li>
+    <li><a href="#hysteresis">Hysteresis State Machine</a></li>
+    <li><a href="#memory">Memory Design</a></li>
+    <li><a href="#codeflow-c">Code Flow — C Implementation</a></li>
+    <li><a href="#codeflow-py">Code Flow — Python Implementation</a></li>
+    <li><a href="#known-issues">Known Limitations</a></li>
+  </ol>
+</nav>
+
+
+<!-- ═══════════════════════════════════════════════════════ 1 INTRO -->
+<section id="intro">
+<h2><span class="section-num">1</span>Introduction &amp; Goals</h2>
+
+<p>This system detects when the optical path of an externally mounted camera has become unreliable — due to weather, physical contamination, or partial blockage. It is a <strong>detection-only</strong> system. It does not attempt to restore, dehaze, or recover any image information. Its sole job is to raise an alarm so that the host system can respond appropriately (e.g. stop relying on the camera feed, request a lens clean, or flag the data as invalid).</p>
+
+<p>The target platform is an <strong>ARM Cortex-M0</strong> microcontroller embedded in a camera ISP — a processor with no floating-point unit, no division in hardware, very limited RAM (~2 KB budget for this module), and no operating system. This makes the algorithm design radically different from what you would write for a laptop or GPU. Every design decision has been made with these constraints at the forefront.</p>
+
+<div class="callout callout-key">
+  <div class="callout-title">Design contract</div>
+  <p>No <code>float</code> or <code>double</code> anywhere. No dynamic memory allocation. No standard library beyond <code>stdint.h</code> and <code>string.h</code>. No <code>printf</code> in the core module. All buffer sizes are compile-time constants. Integer overflow is explicitly managed at every risk point.</p>
+</div>
+
+<p>The outputs are one of six classes:</p>
+<p>
+  <span class="pill pill-clean">CLEAN</span>&nbsp;
+  <span class="pill pill-fog">FOG</span>&nbsp;
+  <span class="pill pill-frost">FROST</span>&nbsp;
+  <span class="pill pill-dirt">DIRT</span>&nbsp;
+  <span class="pill pill-obs">OBSTRUCTION</span>&nbsp;
+  <span class="pill pill-unknown">UNKNOWN</span>
+</p>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════ 2 WHAT WE DETECT -->
+<section id="what-we-detect">
+<h2><span class="section-num">2</span>What We Detect and Why</h2>
+
+<h3 id="degradation-types">The Degradation Types</h3>
+
+<p>Each degradation leaves a distinct fingerprint on the image. Understanding the physical cause of each helps explain why the features were chosen.</p>
+
+<h4><span class="pill pill-fog">FOG</span> &amp; Atmospheric Haze</h4>
+<p>Fog scatters light uniformly across the entire field of view. Every part of the image loses contrast and sharpness by roughly the same amount — distant objects disappear first, but the degradation is spatially even. The histogram is compressed toward mid-tones. The global mean stays close to the scene's normal level because the fog adds scattered light but also attenuates the original signal, roughly balancing out.</p>
+
+<h4><span class="pill pill-frost">FROST</span> &amp; Condensation</h4>
+<p>Ice crystals or condensation on the lens surface create a diffuse, semi-translucent coating directly on the optical element. Unlike fog, the scattering happens right at the lens — so it degrades the image uniformly but adds a bright veil on top of the scene, pushing the global mean brightness noticeably higher. The histogram collapses toward the high end (everything washes out bright). Sharpness collapses completely because the ice crystals are directly in the focal path.</p>
+
+<h4><span class="pill pill-dirt">DIRT</span> &amp; Mud</h4>
+<p>An opaque dark blob sitting on part of the lens. Unlike fog or frost, dirt is spatially localised — it darkens specific grid cells while leaving others unaffected. The affected cells show near-zero internal variance (a solid mud blob has no texture) and their average brightness is significantly lower than the rest of the frame. The unaffected cells look normal, so the overall image may still have reasonable global contrast and sharpness.</p>
+
+<h4><span class="pill pill-obs">OBSTRUCTION</span></h4>
+<p>Any solid object placed on or very close to the lens that blocks part of the field of view. Unlike dirt, the obstruction may not be dark — tape, a sticker, an ice chunk, or a bright reflective surface all create a flat (low-variance) region that can be at any brightness. The detection logic is the same as for dirt (look for flat cells with spatial non-uniformity) but without the dark-brightness requirement.</p>
+
+<h3 id="how-they-differ">How They Differ from Each Other</h3>
+
+<table>
+  <thead>
+    <tr>
+      <th>Feature</th>
+      <th><span class="pill pill-fog">FOG</span></th>
+      <th><span class="pill pill-frost">FROST</span></th>
+      <th><span class="pill pill-dirt">DIRT</span></th>
+      <th><span class="pill pill-obs">OBSTRUCTION</span></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Sharpness (Laplacian)</td><td>Drops</td><td>Drops severely</td><td>Normal globally</td><td>Normal globally</td></tr>
+    <tr><td>Global contrast</td><td>Drops</td><td>Drops</td><td>Normal or slight drop</td><td>Unaffected</td></tr>
+    <tr><td>Global mean brightness</td><td>Near baseline</td><td><strong>Elevated</strong></td><td>Slight drop</td><td>Variable</td></tr>
+    <tr><td>Histogram spread</td><td>Moderate collapse</td><td><strong>Severe</strong> collapse to bright end</td><td>Slight</td><td>Slight</td></tr>
+    <tr><td>Spatial uniformity</td><td>Uniform across frame</td><td>Uniform across frame</td><td><strong>Non-uniform</strong> (local blob)</td><td><strong>Non-uniform</strong> (local blob)</td></tr>
+    <tr><td>Cell internal variance</td><td>All cells reduced equally</td><td>All cells reduced equally</td><td>Affected cells near zero</td><td>Affected cells near zero</td></tr>
+    <tr><td>Affected cell brightness</td><td>All mid-range</td><td>All bright</td><td><strong>Dark</strong> relative to global mean</td><td>Any brightness</td></tr>
+  </tbody>
+</table>
+
+<p>This table is the foundation of the entire classifier. Each row describes a feature that is measured, and each pattern of values leads to a unique label. The challenge is implementing all these measurements on a microcontroller with 2 KB of RAM and no floating-point unit.</p>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════ 3 PIPELINE -->
+<section id="pipeline">
+<h2><span class="section-num">3</span>The Detection Pipeline</h2>
+
+<h3 id="single-pass">Single-Pass Design</h3>
+
+<p>On a PC you would typically write separate functions for each metric, looping over the image multiple times. On a Cortex-M0 with a cache-less memory bus, every pass over a large image is expensive. We make one pass over the image and compute <em>all</em> metrics simultaneously. The pixel at position (x, y) contributes to the Laplacian, the histogram, the global statistics, and its grid cell in the same inner loop iteration.</p>
+
+<div class="pipeline">
+
+  <div class="pipe-step">
+    <div class="pipe-connector"><div class="line" style="visibility:hidden"></div><div class="dot"></div><div class="line"></div></div>
+    <div class="pipe-box">
+      <div class="pipe-title">Input: Grayscale Frame (uint8, row-major)</div>
+      <div class="pipe-out">H × W bytes — no padding, values 0–255</div>
+    </div>
+  </div>
+
+  <div class="pipe-step">
+    <div class="pipe-connector"><div class="line"></div><div class="dot"></div><div class="line"></div></div>
+    <div class="pipe-box">
+      <div class="pipe-title">Single Pass at Stride 4</div>
+      <div class="pipe-out">Visits 1/16th of all pixels. Computes simultaneously: Laplacian, min/max/sum, histogram bins, grid cell accumulators.</div>
+    </div>
+  </div>
+
+  <div class="pipe-step">
+    <div class="pipe-connector"><div class="line"></div><div class="dot"></div><div class="line"></div></div>
+    <div class="pipe-box">
+      <div class="pipe-title">Thumbnail MAD (192 pixel reads, separate micro-loop)</div>
+      <div class="pipe-out">Reads 16×12 thumbnail, computes inter-frame difference vs. stored previous thumbnail, updates stored thumbnail.</div>
+    </div>
+  </div>
+
+  <div class="pipe-step">
+    <div class="pipe-connector"><div class="line"></div><div class="dot"></div><div class="line"></div></div>
+    <div class="pipe-box">
+      <div class="pipe-title">Feature Derivation</div>
+      <div class="pipe-out">From accumulators: <span>laplacian_var</span>, <span>global_contrast</span>, <span>global_mean</span>, <span>histogram_spread</span>, <span>occlusion_score</span>, <span>obstruction_score</span>, <span>cell_mean_variance</span>, <span>temporal_mad</span></div>
+    </div>
+  </div>
+
+  <div class="pipe-step">
+    <div class="pipe-connector"><div class="line"></div><div class="dot"></div><div class="line"></div></div>
+    <div class="pipe-box">
+      <div class="pipe-title">EMA Baseline Update</div>
+      <div class="pipe-out">Fast EMA (shift 4, ~16 frame time constant) always updates. Slow EMA (shift 8, ~256 frames) only updates when classification is CLEAN.</div>
+    </div>
+  </div>
+
+  <div class="pipe-step">
+    <div class="pipe-connector"><div class="line"></div><div class="dot"></div><div class="line"></div></div>
+    <div class="pipe-box">
+      <div class="pipe-title">Ratio Computation</div>
+      <div class="pipe-out">For each feature: <span>ratio = (fast_raw × 128) / (slow_raw + 1)</span>. Value of 128 = at baseline. Below = dropped. Above = elevated.</div>
+    </div>
+  </div>
+
+  <div class="pipe-step">
+    <div class="pipe-connector"><div class="line"></div><div class="dot"></div><div class="line"></div></div>
+    <div class="pipe-box">
+      <div class="pipe-title">Decision Tree</div>
+      <div class="pipe-out">Ratios evaluated in priority order → raw classification label + confidence 0–255</div>
+    </div>
+  </div>
+
+  <div class="pipe-step">
+    <div class="pipe-connector"><div class="line"></div><div class="dot"></div><div class="line" style="visibility:hidden"></div></div>
+    <div class="pipe-box">
+      <div class="pipe-title">Hysteresis State Machine</div>
+      <div class="pipe-out">Enter degraded after 5 consecutive detections. Clear to CLEAN after 15 consecutive CLEAN frames. Output: final <span>DegradationClass</span></div>
+    </div>
+  </div>
+
+</div>
+
+
+<h3 id="stride">Step 1 — Spatial Subsampling (Stride 4)</h3>
+
+<p>The main loop visits every 4th pixel in both x and y directions, starting 1 pixel in from the border (so the Laplacian filter can safely read neighbouring pixels without an out-of-bounds check).</p>
+
+<pre><span class="cm">// C — degradation.c</span>
+<span class="kw">for</span> (y = <span class="num">1</span>; y &lt; height - <span class="num">1</span>; y += DEGR_STRIDE) {
+    <span class="kw">for</span> (x = <span class="num">1</span>; x &lt; width - <span class="num">1</span>; x += DEGR_STRIDE) {
+        uint8_t p = frame[y * width + x];
+        <span class="cm">/* ... all metrics updated here ... */</span>
+    }
+}</pre>
+
+<p>For a 640×480 frame this visits about 19 000 pixels instead of 307 200 — a 16× reduction. For the kind of degradations we care about (fog, frost, dirty lens) the spatial detail is irrelevant. What matters is the statistical distribution of pixel values, and a 1-in-16 sample is more than sufficient for that.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Why not downsample first?</div>
+  <p>Downsampling with interpolation requires an intermediate buffer (the resized image). We don't have the RAM for it. Stride-4 access achieves the same coverage in a single pass with zero extra storage. The trade-off is that the Laplacian reads <em>full-resolution</em> neighbours — it measures fine-detail sharpness correctly — whereas a downsampled image would measure only coarser-scale edges.</p>
+</div>
+
+
+<h3 id="laplacian">Step 2 — Laplacian Variance (Sharpness Proxy)</h3>
+
+<p>The Laplacian is a second-order derivative filter. Applied to a pixel, it measures how different that pixel is from its immediate neighbours. On a sharp edge the Laplacian is large; on a smooth or blurred region it is near zero. We use the simplest 3×3 discrete approximation:</p>
+
+<pre>kernel:     [ 0,  1,  0 ]
+            [ 1, -4,  1 ]
+            [ 0,  1,  0 ]
+
+lap = 4×p − p_above − p_below − p_left − p_right</pre>
+
+<p>Because we only care about the magnitude of sharpness (not the direction of edges), we take the absolute value <code>|lap|</code> and clamp it to 255. We then accumulate the <em>sum of squares</em> and divide by the pixel count, giving us the mean squared Laplacian response — a number that is high for a sharp image and near zero for a blurred one.</p>
+
+<pre><span class="cm">// C — degradation.c</span>
+int16_t lap = (<span class="num">4</span> * (int16_t)p)
+            - frame[(y<span class="num">-1</span>) * width + x]
+            - frame[(y<span class="num">+1</span>) * width + x]
+            - frame[y * width + (x<span class="num">-1</span>)]
+            - frame[y * width + (x<span class="num">+1</span>)];
+<span class="kw">if</span> (lap &lt; <span class="num">0</span>)   lap = -lap;
+<span class="kw">if</span> (lap &gt; <span class="num">255</span>) lap = <span class="num">255</span>;  <span class="cm">/* clamp before squaring — prevents uint32 overflow */</span>
+lap_sumsq += (uint32_t)lap * lap;
+lap_count++;</pre>
+
+<p>After the loop: <code>laplacian_var = (lap_sumsq / lap_count) &gt;&gt; 4</code>. The right-shift by 4 scales the result into the 0–255 range — a typical outdoor sharp scene reads around 40–120; a fog-degraded scene drops below 15.</p>
+
+<div class="callout callout-warn">
+  <div class="callout-title">Overflow management</div>
+  <p>Clamping <code>|lap|</code> to 255 before squaring is critical. Without it, <code>lap²</code> can reach 1020² = 1 040 400, and summing ~4500 such values would overflow a <code>uint32_t</code>. After clamping, the maximum sum is 4500 × 255² = 292 million, safely below 2³² ≈ 4.3 billion.</p>
+</div>
+
+
+<h3 id="contrast">Step 3 — Michelson Contrast</h3>
+
+<p>Michelson contrast is a global measure of the dynamic range of pixel values in the frame. It compares the brightest sampled pixel to the darkest:</p>
+
+<pre>global_contrast = (max − min) × 256 / (max + min + 1)</pre>
+
+<p>The <code>+1</code> in the denominator prevents division by zero when both max and min are zero (completely black frame). The <code>×256</code> stretches the result across the full uint8 range. On a normal scene this gives values around 100–200. Fog compresses the dynamic range — the darkest and brightest pixels converge toward mid-grey — so this number drops. Frost has a similar effect. Dirt or obstruction covering only part of the lens may not affect global contrast much.</p>
+
+<p>Critically, we accumulate <code>global_min</code> and <code>global_max</code> inside the main loop with simple comparisons — zero extra storage, computed for free alongside everything else.</p>
+
+
+<h3 id="histogram">Step 4 — Histogram Spread &amp; Global Mean</h3>
+
+<p>We build an 8-bin histogram of pixel intensities. Each bin covers 32 intensity values (0–31 → bin 0, 32–63 → bin 1, …, 224–255 → bin 7). The bin index for a pixel is simply <code>pixel_value &gt;&gt; 5</code> — a right-shift, no division, no lookup table.</p>
+
+<p>After the loop, we compute the <strong>histogram spread</strong>: the distance between the 5th-percentile bin and the 95th-percentile bin, multiplied by 32. This tells us how wide the pixel value distribution is.</p>
+
+<pre><span class="cm">// Walk from the left until we've seen 5% of pixels</span>
+target = global_count / <span class="num">20</span>;
+cumul = <span class="num">0</span>;
+<span class="kw">for</span> (b = <span class="num">0</span>; b &lt; <span class="num">8</span>; b++) {
+    cumul += hist[b];
+    <span class="kw">if</span> (cumul &gt; target) { bin_lo = b; <span class="kw">break</span>; }
+}
+<span class="cm">// Walk from the right until we've seen 5% of pixels from the top</span>
+cumul = <span class="num">0</span>;
+<span class="kw">for</span> (b = <span class="num">7</span>; b &gt;= <span class="num">0</span>; b--) {
+    cumul += hist[b];
+    <span class="kw">if</span> (cumul &gt; target) { bin_hi = b; <span class="kw">break</span>; }
+}
+histogram_spread = (bin_hi &gt; bin_lo) ? (bin_hi - bin_lo) * <span class="num">32</span> : <span class="num">0</span>;</pre>
+
+<p>The spread is the <strong>key discriminator between fog and frost</strong>:</p>
+<ul style="padding-left:20px; margin-bottom:14px;">
+  <li>A normal outdoor scene: spread ≈ 160–224 (pixels span most of the range)</li>
+  <li>Fog: spread drops to 64–96 (mid-tones dominate, extremes disappear)</li>
+  <li>Frost: spread drops below 64 (everything washes out to bright, extremely compressed)</li>
+</ul>
+
+<p>The <strong>global mean</strong> is accumulated as a running sum divided by the sample count at the end. It is the other frost discriminator — fog keeps mean near baseline, frost elevates it significantly because the ice coating adds a bright diffuse layer on top of the scene.</p>
+
+
+<h3 id="grid">Step 5 — Grid Cell Analysis (Occlusion &amp; Obstruction)</h3>
+
+<p>The frame is divided into a 4-column × 3-row grid of 12 cells. For each cell we accumulate the sum of pixel values and the sum of squared pixel values. After the loop, these give us the mean and variance for each cell.</p>
+
+<h4>Why a grid?</h4>
+<p>Global metrics (contrast, mean, histogram) cannot distinguish between a uniformly degraded frame and a partially blocked one. A piece of dark tape covering the bottom-right corner does not significantly change the global mean or contrast — but it does make one or two cells very dark and flat while the others remain normal. The grid provides spatial awareness at minimal memory cost.</p>
+
+<h4>Cell internal variance (flatness detection)</h4>
+<p>The variance of pixels within a single cell is computed as:</p>
+<pre>local_variance = (sumsq / count) − mean²
+lvar8 = local_variance &gt;&gt; 8   <span class="cm">/* scale to uint8 */</span></pre>
+
+<p>A cell is considered <strong>flat</strong> if <code>lvar8 &lt; 8</code>. A flat cell means all pixels in that region are nearly the same value — the signature of something solid (mud, tape, ice) sitting on the lens. A normal scene has varied textures, so cell variance stays well above this threshold.</p>
+
+<h4>Occlusion score vs. Obstruction score</h4>
+
+<div class="feature-grid">
+  <div class="feature-card">
+    <h4 style="color:var(--dirt)">Occlusion (→ DIRT)</h4>
+    <ul>
+      <li><span>Flat cell</span> (<code>lvar8 &lt; 8</code>)</li>
+      <li><span>AND dark</span>: cell mean &lt; global mean / 2</li>
+      <li>Counts dark flat cells (0–12)</li>
+      <li>Signature of mud, dirt blobs</li>
+    </ul>
+  </div>
+  <div class="feature-card">
+    <h4 style="color:var(--obs)">Obstruction</h4>
+    <ul>
+      <li><span>Flat cell</span> (<code>lvar8 &lt; 8</code>)</li>
+      <li><span>At any brightness</span></li>
+      <li>Counts all flat cells (0–12)</li>
+      <li>Includes bright obstructions (tape, ice)</li>
+    </ul>
+  </div>
+</div>
+
+<p>Every occluded cell is also an obstructed cell, but not vice versa. The brightness requirement is what separates them.</p>
+
+<h4>Cell mean variance (spatial non-uniformity)</h4>
+<p>After computing all 12 cell means, we compute the variance <em>of those means</em>:</p>
+<pre>cell_mean_variance = variance(cell_mean[0..11]) &gt;&gt; 6</pre>
+
+<p>If all 12 cells have similar mean brightness, this value is low — indicating the frame is <strong>spatially uniform</strong> (typical of fog or frost, which affect the whole frame equally). If some cells are bright and others dark — as happens when part of the lens is covered — this value is high, indicating <strong>spatial non-uniformity</strong> (typical of dirt or obstruction).</p>
+
+<p>This is the critical gate that separates lens obstruction from global degradation.</p>
+
+
+<h3 id="temporal">Step 6 — Temporal Thumbnail MAD</h3>
+
+<p>To detect whether the camera is seeing a static scene (which could indicate the lens is frozen or covered), we compare each frame to the previous one. Rather than comparing full frames (too much RAM), we work on a tiny 16×12 pixel thumbnail — 192 bytes.</p>
+
+<p>The thumbnail is downsampled by mapping each of the 192 positions to the nearest pixel in the full frame. We compute the Mean Absolute Difference (MAD) between the current thumbnail and the one stored from the previous frame:</p>
+
+<pre>raw_mad = sum(|current[i] - previous[i]|) / 192</pre>
+
+<p>This value is smoothed through a fast EMA. A high MAD means the scene is changing (moving vehicles, people walking). A low, stable MAD means nothing is moving — which is consistent with degradation but also with a genuinely static scene. For this reason, temporal MAD is used as a supporting signal rather than a primary trigger. The dual-EMA baseline handles the static-scene ambiguity by comparing the current MAD rate to the historical baseline MAD rate.</p>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════ 4 BASELINE -->
+<section id="baseline">
+<h2><span class="section-num">4</span>Dual-Timescale Baseline System</h2>
+
+<h3 id="ema">Exponential Moving Averages</h3>
+
+<p>The biggest challenge in degradation detection is that different scenes, lighting conditions, and camera placements produce wildly different "normal" values. A camera looking at a bright sunny road has very different sharpness, contrast, and mean brightness from one mounted in a shaded tunnel. If we used fixed absolute thresholds (e.g. "fog if contrast &lt; 40") the detector would fire incorrectly in many legitimate environments.</p>
+
+<p>The solution is to track a <strong>personalised baseline</strong> for each feature based on what the camera has seen when the scene was known to be clean. We maintain two baselines for each feature using Exponential Moving Averages (EMAs) at different speeds:</p>
+
+<div class="ema-row">
+  <div class="ema-box ema-fast">
+    <div class="ema-label">Fast EMA</div>
+    <div class="ema-val">α = 1/16</div>
+    <div class="ema-desc">Right-shift by 4<br>Time constant ≈ 16 frames<br>Tracks recent conditions</div>
+  </div>
+  <div class="ema-box ema-slow">
+    <div class="ema-label">Slow EMA</div>
+    <div class="ema-val">α = 1/256</div>
+    <div class="ema-desc">Right-shift by 8<br>Time constant ≈ 256 frames<br>Tracks long-term baseline</div>
+  </div>
+</div>
+
+<p>The EMA update formula — implemented with integer bit-shifts rather than multiplication or division — is:</p>
+<pre>ema = ema − (ema &gt;&gt; shift) + raw_value</pre>
+
+<p>At steady state, the EMA converges to <code>raw_value × (1 &lt;&lt; shift)</code>. To recover the approximate raw value from the EMA: <code>raw ≈ ema &gt;&gt; shift</code>. This is why the EMAs are stored as <code>uint16_t</code> rather than <code>uint8_t</code> — they hold the raw value scaled up by 16 or 256, which requires 16-bit storage to avoid overflow.</p>
+
+<div class="callout callout-info">
+  <div class="callout-title">Why bit-shifts instead of floating-point?</div>
+  <p>The Cortex-M0 has no hardware division and no FPU. A software floating-point divide on this processor takes hundreds of cycles. A bit-shift takes one cycle. By choosing alpha values that are exact negative powers of two (1/16, 1/256), we eliminate all multiplication and division from the baseline update — one of the most frequently executed code paths.</p>
+</div>
+
+
+<h3 id="ratio">The Ratio — What 128 Means</h3>
+
+<p>Instead of comparing a feature's raw value against an absolute threshold, we compare the fast EMA against the slow EMA. The ratio is:</p>
+
+<pre>ratio = (fast_raw × 128) / (slow_raw + 1)</pre>
+
+<p>where <code>fast_raw = fast_ema &gt;&gt; 4</code> and <code>slow_raw = slow_ema &gt;&gt; 8</code>.</p>
+
+<table>
+  <thead><tr><th>Ratio value</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>128</code></td><td>Fast EMA equals slow EMA — feature is at its normal baseline</td></tr>
+    <tr><td>&lt; 128</td><td>Fast EMA has dropped below the slow EMA — feature has decreased recently</td></tr>
+    <tr><td>&gt; 128</td><td>Fast EMA has risen above the slow EMA — feature has increased recently</td></tr>
+    <tr><td><code>64</code></td><td>Feature is at 50% of its baseline — a significant drop</td></tr>
+    <tr><td><code>192</code></td><td>Feature is at 150% of its baseline — a significant rise</td></tr>
+  </tbody>
+</table>
+
+<p>This design means the detector automatically adapts to any environment. Whether the baseline sharpness is 40 or 140, the ratio-based threshold fires when sharpness drops to a given fraction of whatever the clean-scene baseline happened to be. No per-deployment tuning required.</p>
+
+
+<h3 id="slow-freeze">Slow EMA Freeze During Degradation</h3>
+
+<p>There is a subtle but critical problem with always-updating baselines: if a degradation persists for many frames, the slow EMA will eventually drift toward the degraded values, the ratio will return to 128, and the alarm will extinguish itself even though the lens is still dirty. This is exactly the failure mode observed in early testing.</p>
+
+<p>The solution: the slow EMA is <strong>frozen</strong> as soon as a degradation is confirmed in the hysteresis state machine, and stays frozen until the classification returns to CLEAN.</p>
+
+<pre><span class="kw">if</span> (state->hyst_class == DEGRADATION_CLEAN) {
+    <span class="cm">/* Both EMAs update freely — building the clean baseline */</span>
+    state->baseline.lap_slow = <span class="fn">ema_update</span>(state->baseline.lap_slow, ...);
+} <span class="cm">/* else: slow EMA stays locked at the last clean value */</span>
+
+<span class="cm">/* Fast EMA always updates — it tracks the current (degraded) state */</span>
+state->baseline.lap_fast = <span class="fn">ema_update</span>(state->baseline.lap_fast, ...);</pre>
+
+<p>The fast EMA continues to update so that the ratio numerator tracks whatever the current scene looks like. The slow EMA stays pinned at the last known clean baseline. The ratio therefore stays depressed (or elevated) for as long as the degradation persists, no matter how many frames pass.</p>
+
+
+<h3 id="warmup">Startup Warmup (60 Frames)</h3>
+
+<p>At startup, both EMAs are at zero. It takes time for them to converge to the actual scene values. During this convergence window, the ratios are meaningless. We suppress all alarms for the first 60 frames (6 seconds at 10 Hz), letting both EMAs stabilise before any classification decisions are made.</p>
+
+<p>After 60 frames, <code>warmup_done</code> is set to 1 and alarms are enabled. The baseline at this point represents a meaningful clean-scene reference. If the camera is mounted already degraded (e.g. lens already frosted), the baseline will converge to degraded values and the detector will not fire after warmup. This is a known trade-off — the solution is the optional NVM serialise/deserialise API, which allows a known-good baseline to be saved to flash and restored after a reboot, skipping the warmup entirely.</p>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════ 5 CLASSIFIER -->
+<section id="classifier">
+<h2><span class="section-num">5</span>Classification — The Decision Tree</h2>
+
+<p>With all seven ratio values computed, the classifier evaluates them in a fixed priority order. The order matters: more specific or stronger signals are checked first, preventing ambiguous conditions from being masked by the more general ones.</p>
+
+<div class="dtree">
+
+  <div class="dnode">
+    <div class="dnode-num">1</div>
+    <div class="dnode-body">
+      <div class="dnode-class" style="color:var(--dirt)">DIRT</div>
+      <div class="dnode-conds">
+        <code>r_occ &gt; 192</code> (dark flat cells elevated &gt;50% above baseline)<br>
+        AND <code>r_cellvar &gt; 160</code> (frame is spatially non-uniform)<br><br>
+        Dark opaque blobs on the lens create cells with near-zero variance and brightness well below the global mean. The combination of dark flat cells <em>and</em> high spatial non-uniformity is extremely specific to this condition.
+      </div>
+    </div>
+  </div>
+
+  <div class="dnode">
+    <div class="dnode-num">2</div>
+    <div class="dnode-body">
+      <div class="dnode-class" style="color:var(--obs)">OBSTRUCTION</div>
+      <div class="dnode-conds">
+        <code>r_obs &gt; 192</code> (flat cells at any brightness, elevated &gt;50% above baseline)<br>
+        AND <code>r_cellvar &gt; 160</code> (spatially non-uniform)<br>
+        AND <code>r_occ ≤ 96</code> (occlusion score NOT elevated — rules out dirt)<br><br>
+        Checked second because it uses a superset of the dirt condition (flat cells, any brightness). The <code>r_occ ≤ 96</code> guard ensures we only reach this branch if the flat cells are NOT dark — i.e. tape, ice, or a bright obstruction rather than mud.
+      </div>
+    </div>
+  </div>
+
+  <div class="dnode">
+    <div class="dnode-num">3</div>
+    <div class="dnode-body">
+      <div class="dnode-class" style="color:var(--frost)">FROST</div>
+      <div class="dnode-conds">
+        <code>r_lap &lt; 80</code> (sharpness dropped to ~62% of baseline)<br>
+        AND <code>r_mean &gt; 160</code> (mean brightness elevated ~25% above baseline)<br>
+        AND <code>r_spr &lt; 56</code> (histogram spread collapsed severely)<br>
+        AND <code>r_cellvar &lt; 96</code> (uniform across all cells — no single-cell blob)<br><br>
+        Requires all four conditions simultaneously. The elevated mean is the critical separator from fog — frost adds a bright diffuse veil; fog does not. The severely collapsed histogram (threshold lower than fog's) ensures we are seeing the extreme brightness compression characteristic of ice on the lens.
+      </div>
+    </div>
+  </div>
+
+  <div class="dnode">
+    <div class="dnode-num">4</div>
+    <div class="dnode-body">
+      <div class="dnode-class" style="color:var(--fog)">FOG</div>
+      <div class="dnode-conds">
+        <code>r_ctr &lt; 80</code> (contrast dropped to ~62% of baseline)<br>
+        AND <code>r_lap &lt; 80</code> (sharpness dropped)<br>
+        AND <code>r_mean &gt; 96</code> AND <code>r_mean &lt; 160</code> (mean stays near baseline — not elevated)<br>
+        AND <code>r_cellvar &lt; 96</code> (uniform across the frame)<br><br>
+        The bounded mean check (<code>96..160</code>) is the key fog-frost discriminator. Fog keeps mean near its baseline; frost pushes it upward. The lower bound (<code>&gt; 96</code>) also excludes dark scenes from being called fog — a completely dark frame has near-zero mean which drops the ratio below 96.
+      </div>
+    </div>
+  </div>
+
+  <div class="dnode">
+    <div class="dnode-num">5</div>
+    <div class="dnode-body">
+      <div class="dnode-class" style="color:var(--clean)">CLEAN</div>
+      <div class="dnode-conds">None of the above conditions triggered. The default safe output.</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-title">Note on the Python port</div>
+  <p>The Python implementation in <code>detector.py</code> uses <strong>absolute thresholds</strong> on raw feature values rather than ratios, because the Python version is primarily used for real-time testing on a PC before the C code is deployed to hardware. The C implementation uses the full ratio-based approach described above. The Python classifier is therefore more sensitive to ambient lighting conditions, which is why a bright-environment threshold like <code>mean &gt; 170</code> can fail in dim rooms — a known limitation that would be fixed by switching the Python classifier to use the same ratio approach.</p>
+</div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════ 6 HYSTERESIS -->
+<section id="hysteresis">
+<h2><span class="section-num">6</span>Hysteresis State Machine</h2>
+
+<p>The raw classifier output is noisy. A single frame of rain, a bird flying past, or a bright reflection can momentarily satisfy one of the degradation conditions without the lens actually being dirty. To prevent flickering alarms and false positives, a hysteresis state machine filters the raw output.</p>
+
+<p>The state machine has two counters: <code>confirm_count</code> and <code>clear_count</code>.</p>
+
+<table>
+  <thead>
+    <tr><th>Current state</th><th>Raw output</th><th>Action</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>CLEAN</td>
+      <td>non-CLEAN</td>
+      <td>Increment <code>confirm_count</code>. If <code>confirm_count ≥ 5</code>, switch to the detected degradation class and reset counter.</td>
+    </tr>
+    <tr>
+      <td>CLEAN</td>
+      <td>CLEAN</td>
+      <td>Reset <code>confirm_count</code> to 0. A single clean frame resets the whole confirmation window.</td>
+    </tr>
+    <tr>
+      <td>Degraded</td>
+      <td>CLEAN</td>
+      <td>Increment <code>clear_count</code>. If <code>clear_count ≥ 15</code>, switch back to CLEAN and reset counter.</td>
+    </tr>
+    <tr>
+      <td>Degraded</td>
+      <td>Different degradation</td>
+      <td>Switch type immediately. No hysteresis between degradation types — we want to report the most current classification without delay.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The asymmetry (5 frames to enter, 15 frames to clear) is intentional. It is much worse to miss an actual degradation for a few frames than to clear an alarm a second late. Lens contamination does not vanish instantly — if the detector sees 15 consecutive clean frames, the degradation has genuinely cleared.</p>
+
+<p>At 10 Hz detection rate:</p>
+<ul style="padding-left:20px; margin-bottom:14px;">
+  <li>Enter degraded: 5 frames = 0.5 seconds</li>
+  <li>Clear to CLEAN: 15 frames = 1.5 seconds</li>
+</ul>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════ 7 MEMORY -->
+<section id="memory">
+<h2><span class="section-num">7</span>Memory Design</h2>
+
+<p>The entire module state lives in a single zero-initializable struct: <code>DegradationState</code>. Declaring it as a static variable at file scope initializes it to all-zeros at link time — no init function required.</p>
+
+<div class="memmap">
+  <div class="memrow">
+    <div class="memaddr">offset 0</div>
+    <div class="memsize">32 B</div>
+    <div class="memname"><code>DegradationBaseline</code> — 8 feature pairs × 2 uint16 (fast + slow EMA)</div>
+  </div>
+  <div class="memrow">
+    <div class="memaddr">offset 32</div>
+    <div class="memsize">192 B</div>
+    <div class="memname"><code>thumbnail[12][16]</code> — previous-frame 16×12 grayscale thumbnail</div>
+  </div>
+  <div class="memrow">
+    <div class="memaddr">offset 224</div>
+    <div class="memsize">2 B</div>
+    <div class="memname"><code>frame_count</code> — uint16, for warmup bookkeeping</div>
+  </div>
+  <div class="memrow">
+    <div class="memaddr">offset 226</div>
+    <div class="memsize">4 B</div>
+    <div class="memname"><code>warmup_done</code>, <code>hyst_class</code>, <code>confirm_count</code>, <code>clear_count</code> — uint8 each</div>
+  </div>
+  <div class="memrow memtotal">
+    <div class="memaddr">total</div>
+    <div class="memsize">230 B</div>
+    <div class="memname"><strong>DegradationState</strong> — persistent module state (static allocation)</div>
+  </div>
+  <div class="memrow">
+    <div class="memaddr">stack</div>
+    <div class="memsize">~170 B</div>
+    <div class="memname">Working variables inside <code>degradation_update()</code> — cell arrays, histogram, accumulators (released after each call)</div>
+  </div>
+  <div class="memrow memtotal">
+    <div class="memaddr">peak</div>
+    <div class="memsize">~400 B</div>
+    <div class="memname"><strong>Total peak RAM</strong> — well within the 2 KB budget</div>
+  </div>
+</div>
+
+<p>The <code>DegradationBaseline</code> struct can be serialized to a byte buffer and saved to non-volatile memory (NVM/flash). On next power-up, deserializing it restores the clean-scene baseline and skips the 60-frame warmup, giving the detector immediate full-sensitivity operation from the first frame.</p>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════ 8 C CODE FLOW -->
+<section id="codeflow-c">
+<h2><span class="section-num">8</span>Code Flow — C Implementation</h2>
+
+<h3>File Structure</h3>
+
+<table>
+  <thead><tr><th>File</th><th>Role</th><th>Compiles on</th></tr></thead>
+  <tbody>
+    <tr><td><code>degradation.h</code></td><td>All public types, enums, structs, constants, and function declarations. This is the only file a host application needs to include.</td><td>Both targets</td></tr>
+    <tr><td><code>degradation.c</code></td><td>Complete implementation — single-pass extraction, EMA baselines, decision tree, hysteresis. No stubs, no TODOs.</td><td>Both targets</td></tr>
+    <tr><td><code>test_harness.c</code></td><td>PC-side test runner. Reads raw binary grayscale frames, calls <code>degradation_update()</code> in a loop, writes per-frame features and classifications to CSV.</td><td>PC only (uses stdio.h)</td></tr>
+  </tbody>
+</table>
+
+<p>The header and implementation contain zero <code>#ifdef</code> guards — they are pure portable C99 that compile identically for both the PC (MinGW GCC) and the ARM target (arm-none-eabi-gcc).</p>
+
+<h3>Call Sequence</h3>
+
+<pre><span class="cm">/* 1. Application declares state once — zero-init is valid start */</span>
+<span class="kw">static</span> DegradationState cam_state;   <span class="cm">/* .bss — zeroed at link time */</span>
+
+<span class="cm">/* 2. Application calls this for each frame to analyse */</span>
+DegradationResult result;
+<span class="fn">degradation_update</span>(&amp;cam_state, frame_ptr, width, height, &amp;result);
+
+<span class="cm">/* 3. Result contains the classification and confidence */</span>
+<span class="kw">if</span> (result.classification != DEGRADATION_CLEAN) {
+    <span class="fn">raise_alarm</span>(result.classification);
+}</pre>
+
+<h3>Inside <code>degradation_update()</code></h3>
+
+<p>The function is structured in six sequential blocks — each a comment-delimited section in the source:</p>
+
+<ol style="padding-left:20px; line-height:2;">
+  <li><strong>Stack allocation</strong> — declares all working arrays (cell accumulators, histogram, etc.) as local variables. These live on the stack and are released when the function returns.</li>
+  <li><strong>Single-pass main loop</strong> — iterates over the subsampled frame, updating all accumulators simultaneously.</li>
+  <li><strong>Thumbnail MAD loop</strong> — a small separate loop over the 192-pixel thumbnail comparing current vs. previous frame.</li>
+  <li><strong>Feature derivation</strong> — computes the 8 final feature values from the accumulated raw data.</li>
+  <li><strong>EMA baseline update</strong> — updates fast and (conditionally) slow EMAs for each feature.</li>
+  <li><strong>Warmup check → Ratio computation → Decision tree → Hysteresis</strong> — the classification path, skipped during warmup.</li>
+</ol>
+
+<h3>Key Internal Helpers</h3>
+
+<pre><span class="cm">/* EMA update — one cycle on Cortex-M0, no multiply/divide */</span>
+<span class="kw">static</span> uint16_t <span class="fn">ema_update</span>(uint16_t ema, uint8_t raw, uint8_t shift) {
+    <span class="kw">return</span> ema - (ema &gt;&gt; shift) + raw;
+}
+
+<span class="cm">/* Recover raw value from scaled EMA storage */</span>
+<span class="kw">static</span> uint8_t <span class="fn">ema_raw</span>(uint16_t ema, uint8_t shift) {
+    <span class="kw">return</span> (uint8_t)(ema &gt;&gt; shift);
+}
+
+<span class="cm">/* Ratio: fast vs slow EMA, 128 = neutral */</span>
+<span class="kw">static</span> uint8_t <span class="fn">compute_ratio</span>(uint8_t fast_raw, uint8_t slow_raw) {
+    uint16_t num = (uint16_t)fast_raw * <span class="num">128</span>;
+    uint16_t den = (uint16_t)slow_raw + <span class="num">1</span>;
+    uint16_t r   = num / den;          <span class="cm">/* single division per feature, outside hot path */</span>
+    <span class="kw">return</span> r &gt; <span class="num">255</span> ? <span class="num">255</span> : (uint8_t)r;
+}</pre>
+
+<h3>Verifying No Floating Point on ARM</h3>
+<pre><span class="cm"># Build</span>
+arm-none-eabi-gcc -mcpu=cortex-m0 -mthumb -msoft-float -O2 -c degradation.c
+
+<span class="cm"># Verify — must produce zero output</span>
+arm-none-eabi-objdump -d degradation.o | grep -E "__aeabi_fmul|__aeabi_fadd|__aeabi_fdiv"</pre>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════ 9 PYTHON CODE FLOW -->
+<section id="codeflow-py">
+<h2><span class="section-num">9</span>Code Flow — Python Implementation</h2>
+
+<p>The Python version in <code>detector.py</code> is a line-for-line port of the C algorithm. It exists for rapid testing on a PC with a live camera feed — you can tune thresholds, visualise features, and validate behaviour before deploying to hardware. The arithmetic is kept integer-equivalent (no floats in the algorithm), with NumPy used only for vectorised pixel access.</p>
+
+<h3>File Structure</h3>
+
+<table>
+  <thead><tr><th>File</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td><code>detector.py</code></td><td>Core Python port — <code>DegradationState</code> class, <code>degradation_update()</code> function, all thresholds and constants mirroring the C header.</td></tr>
+    <tr><td><code>live.py</code></td><td>Real-time webcam / video feed display. Shows the 4×3 grid overlay, per-feature dashboard with threshold bars, and coloured border on detection.</td></tr>
+    <tr><td><code>test_frost.py</code></td><td>Isolated frost tester. Shows the 4 classifier conditions individually plus diagnostic indicators (edge density, temporal stability, scatter ratio, bright pixel fraction).</td></tr>
+    <tr><td><code>test_harness.c</code></td><td>(C) Batch test runner against raw binary frame files, writes CSV output. <code>run_test.py</code> is the Python equivalent.</td></tr>
+  </tbody>
+</table>
+
+<h3>Inside <code>degradation_update()</code> (Python)</h3>
+
+<p>The function takes a NumPy <code>uint8</code> grayscale array and mirrors the C logic step by step:</p>
+
+<pre><span class="cm"># 1. Build the strided sample grid — equivalent to the C loop bounds</span>
+ys = np.arange(<span class="num">1</span>, h - <span class="num">1</span>, DEGR_STRIDE)
+xs = np.arange(<span class="num">1</span>, w - <span class="num">1</span>, DEGR_STRIDE)
+Y, X = np.meshgrid(ys, xs, indexing=<span class="num">'ij'</span>)
+p = frame[Y, X].astype(np.int32)   <span class="cm"># sampled pixels as int32 for arithmetic</span>
+
+<span class="cm"># 2. Laplacian — vectorised over all sample points simultaneously</span>
+lap = <span class="num">4</span>*p - frame[Y-<span class="num">1</span>,X] - frame[Y+<span class="num">1</span>,X] - frame[Y,X-<span class="num">1</span>] - frame[Y,X+<span class="num">1</span>]
+laplacian_var = _u8((np.abs(lap).clip(<span class="num">0</span>,<span class="num">255</span>)**<span class="num">2</span>).mean() &gt;&gt; <span class="num">4</span>)
+
+<span class="cm"># 3. Global stats, histogram, grid cells, thumbnail MAD — same structure as C
+# 4. EMA updates using integer helpers _ema() and _raw()
+# 5. Classify using _classify_absolute() — fixed thresholds on raw values
+#    (Note: Python uses absolute thresholds; C uses ratio thresholds)</span></pre>
+
+<h3>Key Differences from the C Version</h3>
+
+<table>
+  <thead><tr><th>Aspect</th><th>C implementation</th><th>Python implementation</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Loop style</td>
+      <td>Nested for-loops over pixels, one at a time</td>
+      <td>NumPy vectorised operations over the entire grid simultaneously</td>
+    </tr>
+    <tr>
+      <td>Threshold type</td>
+      <td>Ratio-based: fast EMA / slow EMA compared to ratio thresholds</td>
+      <td>Absolute: raw feature values compared directly to fixed constants</td>
+    </tr>
+    <tr>
+      <td>Environment adaptation</td>
+      <td>Fully adaptive — ratios adjust to any scene automatically</td>
+      <td>Manual threshold tuning needed per environment</td>
+    </tr>
+    <tr>
+      <td>Float usage</td>
+      <td>None — strict integer arithmetic throughout</td>
+      <td>Grid cell analysis uses float64 for bincount weights (convenience); algorithm logic remains integer-equivalent</td>
+    </tr>
+    <tr>
+      <td>State storage</td>
+      <td>C struct, zeroed at link time</td>
+      <td><code>DegradationState</code> Python class with <code>__slots__</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Live Display Flow (<code>live.py</code>)</h3>
+
+<pre><span class="cm"># Every 3rd frame (10 Hz at 30 fps):</span>
+gray   = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+result = <span class="fn">degradation_update</span>(state, gray)
+
+<span class="cm"># Grid overlay: colour cells red (dark flat) or blue (any-brightness flat)</span>
+<span class="fn">draw_grid_overlay</span>(frame, result[<span class="num">"features"</span>], h, w)
+
+<span class="cm"># Dashboard: per-feature bar + threshold line + pass/fail dot</span>
+<span class="fn">draw_dashboard</span>(panel, result, frame_no)
+
+<span class="cm"># Coloured border around frame when degradation is confirmed</span>
+canvas = np.hstack([frame, panel])
+cv2.imshow(<span class="num">"..."</span>, canvas)</pre>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════ 10 KNOWN ISSUES -->
+<section id="known-issues">
+<h2><span class="section-num">10</span>Known Limitations</h2>
+
+<h4>1. Total Camera Occlusion (Hand, Lens Cap)</h4>
+<p>Covering the entire lens with a hand or placing a lens cap produces an all-black frame. All 12 grid cells become flat, but <code>cell_mean_variance</code> collapses to zero (every cell has the same near-zero mean) — failing the spatial non-uniformity gate. The global mean falls well below the fog floor threshold. Result: the frame is classified as <span class="pill pill-clean">CLEAN</span>. The fix is a special total-occlusion branch: if the vast majority of cells are flat AND the global mean is extremely low, classify as OBSTRUCTION regardless of spatial non-uniformity.</p>
+
+<h4>2. Absolute Thresholds in the Python Port</h4>
+<p>The Python classifier uses fixed absolute thresholds (e.g. <code>mean &gt; 170</code> for frost) rather than the ratio-based approach in the C code. This means it is sensitive to ambient light levels and camera characteristics. In dim environments the brightness threshold is already satisfied in clean conditions, or never satisfied even in frost conditions. The correct fix is to pass the slow-EMA baseline mean into the Python classifier and switch to a relative check: <em>is the current mean elevated above the clean baseline?</em></p>
+
+<h4>3. Frost Proxy Materials in Testing</h4>
+<p>Bubble wrap does not optically simulate frost — it magnifies and distorts the scene through discrete bubble-lenses while keeping edge sharpness high. Good frost proxies are petroleum jelly on flat glass, a fogged pane (breathe on it), or a sheet of tracing paper, all of which create genuine diffuse uniform scattering without structural edges.</p>
+
+<h4>4. MJPEG Compression Artifacts</h4>
+<p>Many USB webcams compress frames internally with MJPEG before transmitting. The 8×8 DCT block boundaries appear as weak edges to the Laplacian filter, artificially inflating <code>laplacian_var</code> and making it harder to trigger the sharpness-drop condition for frost and fog. Area-downsampling the frame before processing would average out these block artifacts, at the cost of slightly coarser edge detection.</p>
+
+<h4>5. Static Clean Scenes and Temporal MAD</h4>
+<p>A camera mounted on a tripod pointed at a static wall produces the same low temporal MAD as a frosted camera. The dual-EMA baseline mitigates this — a static scene has a consistently low MAD baseline, so the ratio stays near 128 and no alarm fires. However, if a camera transitions from a moving scene to a genuinely static clean scene at the same time as frost forms, the two effects can partially cancel in the MAD signal. The other features (sharpness, contrast, histogram) provide the primary signal in this case.</p>
+</section>
+
+
+<footer>
+  <p>Camera Degradation Detection System — Internal Technical Document</p>
+  <p style="margin-top:6px">Target: ARM Cortex-M0 &nbsp;·&nbsp; Language: C99 / Python 3 &nbsp;·&nbsp; RAM budget: &lt;2 KB</p>
+</footer>
+
+</div>
+</body>
+</html>

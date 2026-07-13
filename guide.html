@@ -1,0 +1,1223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Camera Degradation Detection — A Guided Tour</title>
+<style>
+  :root{
+    --bg:#0f1117; --surface:#1a1d27; --surface2:#22263a; --surface3:#2a2f48;
+    --border:#2e3350; --accent:#4f8ef7; --accent2:#7c5cfc;
+    --text:#e2e8f0; --muted:#8892aa; --dim:#5c6585;
+    --clean:#3ecf8e; --fog:#9aa3b4; --frost:#74b9ff; --obstruction:#f0574b; --unknown:#a78bfa;
+    --green:#3ecf8e; --yellow:#f5c842; --red:#f0574b; --orange:#f5844b;
+    --font:'Segoe UI',system-ui,-apple-system,sans-serif;
+    --mono:'Cascadia Code','Fira Code','Consolas',monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{scroll-behavior:smooth;scroll-padding-top:64px;}
+  body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.65;}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 1.5rem 6rem;}
+
+  /* ---- top nav ---- */
+  nav.top{position:sticky;top:0;z-index:50;background:rgba(15,17,23,.86);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border);}
+  nav.top .inner{max-width:1060px;margin:0 auto;display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;
+    padding:.55rem 1.5rem;}
+  nav.top .brand{font-weight:700;color:#fff;font-size:.9rem;margin-right:.6rem;white-space:nowrap;}
+  nav.top a{color:var(--muted);text-decoration:none;font-size:.74rem;padding:.2rem .5rem;border-radius:6px;
+    white-space:nowrap;}
+  nav.top a:hover{color:var(--text);background:var(--surface2);}
+
+  /* ---- hero ---- */
+  header.hero{padding:3.4rem 0 1.6rem;}
+  .kicker{color:var(--accent2);font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:.74rem;}
+  h1{font-size:2.5rem;line-height:1.12;color:#fff;margin:.5rem 0 .7rem;letter-spacing:-.01em;}
+  .lead{font-size:1.12rem;color:var(--muted);max-width:760px;}
+  .chips{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:1.3rem;}
+  .chip{font-size:.74rem;font-weight:600;padding:.3rem .7rem;border-radius:999px;border:1px solid var(--border);
+    background:var(--surface);color:var(--muted);}
+  .chip.ok{color:var(--green);border-color:rgba(62,207,142,.4);background:rgba(62,207,142,.08);}
+  .chip.pend{color:var(--yellow);border-color:rgba(245,200,66,.4);background:rgba(245,200,66,.08);}
+
+  /* ---- sections ---- */
+  section{padding:2.6rem 0 1rem;border-top:1px solid var(--border);margin-top:1.6rem;}
+  .secnum{font-family:var(--mono);color:var(--accent);font-size:.82rem;font-weight:600;}
+  h2{font-size:1.7rem;color:#fff;margin:.2rem 0 .9rem;letter-spacing:-.01em;}
+  h3{font-size:1.12rem;color:var(--text);margin:1.6rem 0 .6rem;}
+  h4{font-size:.96rem;color:var(--accent);margin:1.1rem 0 .4rem;letter-spacing:.02em;}
+  p{margin:.7rem 0;}
+  p.big{font-size:1.05rem;}
+  a.inline{color:var(--accent);}
+  ul,ol{margin:.6rem 0 .6rem 1.3rem;}
+  li{margin:.32rem 0;}
+  strong{color:#fff;}
+  em.t{color:var(--frost);font-style:normal;font-weight:600;}
+
+  code{font-family:var(--mono);font-size:.86em;background:var(--surface2);padding:.08em .4em;border-radius:4px;color:#a5d6ff;}
+  pre{font-family:var(--mono);font-size:.82rem;background:var(--surface2);border:1px solid var(--border);
+    border-radius:10px;padding:1rem 1.1rem;overflow-x:auto;line-height:1.7;color:#c9d1d9;margin:.9rem 0;}
+  pre .c{color:var(--dim);} pre .k{color:#ff9bd2;} pre .n{color:#f7c873;} pre .s{color:#9ece6a;}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:1.3rem 1.4rem;margin:1rem 0;}
+  .card.tint{background:linear-gradient(180deg,var(--surface),var(--surface));border-left:3px solid var(--accent);}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1rem;}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;}
+  @media(max-width:760px){.grid2,.grid3{grid-template-columns:1fr;}}
+
+  .callout{border-radius:12px;padding:1rem 1.2rem;margin:1.1rem 0;border:1px solid var(--border);
+    background:var(--surface2);position:relative;}
+  .callout .lbl{font-weight:700;font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;display:block;margin-bottom:.3rem;}
+  .callout.why{border-left:4px solid var(--accent);} .callout.why .lbl{color:var(--accent);}
+  .callout.watch{border-left:4px solid var(--yellow);background:rgba(245,200,66,.06);} .callout.watch .lbl{color:var(--yellow);}
+  .callout.key{border-left:4px solid var(--accent2);} .callout.key .lbl{color:var(--unknown);}
+  .callout.gotcha{border-left:4px solid var(--red);background:rgba(240,87,75,.06);} .callout.gotcha .lbl{color:var(--red);}
+
+  table{width:100%;border-collapse:collapse;font-size:.86rem;margin:.9rem 0;}
+  th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--border);vertical-align:top;}
+  th{color:var(--muted);font-weight:600;font-size:.76rem;text-transform:uppercase;letter-spacing:.05em;}
+  td code{font-size:.82em;}
+  .tablewrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;}
+  tr:last-child td{border-bottom:none;}
+
+  /* class colour pills */
+  .pill{display:inline-block;font-weight:700;font-size:.74rem;padding:.12rem .55rem;border-radius:999px;color:#0b0d12;}
+  .pill.clean{background:var(--clean);} .pill.fog{background:var(--fog);}
+  .pill.frost{background:var(--frost);} .pill.obstruction{background:var(--obstruction);color:#fff;}
+  .pill.unknown{background:var(--unknown);}
+
+  /* ---- interactive: classifier ---- */
+  .lab{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:1.3rem;margin:1.2rem 0;}
+  .lab .labhead{display:flex;justify-content:space-between;align-items:center;gap:.6rem;flex-wrap:wrap;margin-bottom:.4rem;}
+  .lab .labttl{font-weight:700;color:#fff;font-size:1rem;}
+  .lab .labsub{color:var(--muted);font-size:.84rem;}
+  .presets{display:flex;gap:.45rem;flex-wrap:wrap;margin:.7rem 0 1rem;}
+  .presets button{font-family:var(--font);font-size:.78rem;font-weight:600;cursor:pointer;border-radius:8px;
+    border:1px solid var(--border);background:var(--surface2);color:var(--text);padding:.4rem .7rem;transition:.12s;}
+  .presets button:hover{border-color:var(--accent);color:#fff;}
+  .sliders{display:grid;grid-template-columns:1fr 1fr;gap:.8rem 1.4rem;}
+  @media(max-width:680px){.sliders{grid-template-columns:1fr;}}
+  .slider-row label{display:flex;justify-content:space-between;font-size:.82rem;margin-bottom:.15rem;}
+  .slider-row label .nm{color:var(--text);font-weight:600;}
+  .slider-row label .vv{font-family:var(--mono);color:var(--frost);}
+  input[type=range]{width:100%;accent-color:var(--accent);height:4px;}
+  .verdict{margin-top:1.2rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;
+    background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:1rem 1.2rem;}
+  .verdict .big{font-size:1.7rem;font-weight:800;letter-spacing:-.01em;}
+  .verdict .conf{font-family:var(--mono);color:var(--muted);font-size:.9rem;}
+  .cascade{margin-top:1rem;display:flex;flex-direction:column;gap:.5rem;}
+  .branch{border:1px solid var(--border);border-radius:10px;padding:.6rem .8rem;background:var(--surface2);opacity:.7;}
+  .branch.fired{opacity:1;border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;}
+  .branch .bttl{font-weight:700;font-size:.86rem;display:flex;justify-content:space-between;}
+  .branch .conds{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.4rem;}
+  .cond{font-family:var(--mono);font-size:.74rem;padding:.12rem .45rem;border-radius:6px;border:1px solid var(--border);}
+  .cond.pass{color:var(--green);border-color:rgba(62,207,142,.45);background:rgba(62,207,142,.08);}
+  .cond.fail{color:var(--red);border-color:rgba(240,87,75,.4);background:rgba(240,87,75,.06);opacity:.75;}
+
+  /* canvases */
+  canvas{max-width:100%;display:block;}
+  .chartbox{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:1rem;margin:.8rem 0;}
+  .controls{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin:.6rem 0;}
+  .controls button{font-family:var(--font);font-size:.8rem;font-weight:600;cursor:pointer;border-radius:8px;
+    border:1px solid var(--border);background:var(--surface3);color:var(--text);padding:.4rem .8rem;}
+  .controls button:hover{border-color:var(--accent);}
+  .controls label{font-size:.82rem;color:var(--muted);display:flex;align-items:center;gap:.35rem;cursor:pointer;}
+  .legend{display:flex;gap:1rem;flex-wrap:wrap;font-size:.78rem;color:var(--muted);margin-top:.4rem;}
+  .legend span::before{content:"";display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:.35rem;vertical-align:middle;}
+  .lg-raw::before{background:var(--dim);} .lg-fast::before{background:var(--frost);} .lg-slow::before{background:var(--orange);}
+
+  /* grid blob demo */
+  .gridwrap{display:flex;gap:1.4rem;flex-wrap:wrap;align-items:flex-start;}
+  .cgrid{display:grid;grid-template-columns:repeat(4,58px);grid-template-rows:repeat(3,58px);gap:4px;}
+  .cell{border-radius:8px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-size:.72rem;cursor:pointer;user-select:none;transition:.1s;color:#cfd6e6;}
+  .cell.normal{background:#3a4a63;} .cell.bright{background:#dfe6f2;color:#1b2233;border-color:#fff;}
+  .cell.dark{background:#161b27;color:#6b7690;}
+  .scoreboard{font-family:var(--mono);font-size:.86rem;min-width:240px;}
+  .scoreboard div{margin:.3rem 0;}
+  .scoreboard .k{color:var(--muted);} .scoreboard .v{color:var(--frost);font-weight:700;}
+  .mask{letter-spacing:.18em;color:var(--accent);}
+
+  /* memory map */
+  .membar{display:flex;height:46px;border-radius:10px;overflow:hidden;border:1px solid var(--border);font-size:.7rem;font-weight:700;}
+  .membar div{display:flex;align-items:center;justify-content:center;color:#0b0d12;white-space:nowrap;overflow:hidden;}
+  .seg-base{background:var(--accent);} .seg-thumb{background:var(--frost);}
+  .seg-ctr{background:var(--accent2);color:#fff;} .seg-free{background:var(--surface3);color:var(--muted);}
+
+  /* pipeline / flow */
+  .flow{display:flex;flex-direction:column;gap:0;margin:1rem 0;}
+  .fstep{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:.75rem 1rem;}
+  .fstep.core{border-color:var(--accent);background:rgba(79,142,247,.08);}
+  .fstep .ft{font-weight:700;color:var(--text);font-size:.92rem;} .fstep .fd{color:var(--muted);font-size:.82rem;}
+  .farr{text-align:center;color:var(--dim);font-size:1.1rem;line-height:1.3;}
+
+  /* equivalence track */
+  .eqtrack{display:flex;height:30px;border-radius:8px;overflow:hidden;border:1px solid var(--border);margin:.6rem 0;}
+  .eqtrack .seg{height:100%;position:relative;}
+  .eqgut{display:flex;height:10px;border-radius:5px;overflow:hidden;border:1px solid var(--border);margin-bottom:.5rem;}
+  .eqgut .g{height:100%;background:var(--surface3);transition:background .02s;}
+
+  /* fingerprint cards */
+  .fp{border-radius:14px;border:1px solid var(--border);background:var(--surface);overflow:hidden;}
+  .fp .fphead{padding:.7rem 1rem;font-weight:800;color:#0b0d12;}
+  .fp .fpbody{padding:.9rem 1rem;font-size:.82rem;color:var(--muted);}
+  .fp .mini{height:46px;display:flex;align-items:flex-end;gap:3px;margin:.5rem 0;}
+  .fp .mini i{flex:1;background:var(--frost);border-radius:2px 2px 0 0;display:block;}
+  .fp .ug{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;margin:.5rem 0;}
+  .fp .ug span{aspect-ratio:1.3;border-radius:2px;}
+  .meta{font-family:var(--mono);font-size:.74rem;color:var(--text);}
+
+  .foot{margin-top:3rem;padding-top:1.4rem;border-top:1px solid var(--border);color:var(--dim);font-size:.82rem;}
+  .toc{columns:2;column-gap:2rem;font-size:.9rem;}
+  @media(max-width:680px){.toc{columns:1;}}
+  .toc a{color:var(--accent);text-decoration:none;} .toc a:hover{text-decoration:underline;}
+  .step-n{display:inline-block;width:1.5rem;color:var(--dim);font-family:var(--mono);}
+</style>
+</head>
+<body>
+
+<nav class="top"><div class="inner">
+  <span class="brand">📷 Degradation Detector</span>
+  <a href="#s1">1·Problem</a>
+  <a href="#s2">2·Hardware</a>
+  <a href="#s3">3·Integer math</a>
+  <a href="#s4">4·Features</a>
+  <a href="#s5">5·Fingerprints</a>
+  <a href="#s6">6·Classifier</a>
+  <a href="#s7">7·Over time</a>
+  <a href="#s8">8·Spec vs code</a>
+  <a href="#s9">9·Proof</a>
+  <a href="#s10">10·Tooling</a>
+</div></nav>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="kicker">A guided tour · embedded C · computer vision</div>
+  <h1>Teaching the Camera<br>Degradation Detector</h1>
+  <p class="lead">Everything we have built so far, and <em class="t">why</em> we built it that way — from the tiny
+  chip that dictates every rule, through the integer math that replaces floating point, to the decision tree that
+  decides whether your camera can be trusted. Interactive, from first principles.</p>
+  <div class="chips">
+    <span class="chip">Pure C99 · ARM Cortex-M0</span>
+    <span class="chip">&lt; 2 KB RAM</span>
+    <span class="chip">No floating point</span>
+    <span class="chip ok">✓ PC build &amp; tests</span>
+    <span class="chip ok">✓ Python⇄C equivalence</span>
+    <span class="chip ok">✓ Live OpenCV viewer</span>
+    <span class="chip pend">◷ ARM checks pending</span>
+  </div>
+</header>
+
+<div class="card tint">
+  <h3 style="margin-top:0">What you'll learn</h3>
+  <div class="toc">
+    <a href="#s1">1 · The problem: a "check-engine light" for a camera</a><br>
+    <a href="#s2">2 · The hardware that dictates every rule</a><br>
+    <a href="#s3">3 · The integer / fixed-point toolkit</a><br>
+    <a href="#s4">4 · Turning pixels into 9 numbers (one pass)</a><br>
+    <a href="#s5">5 · The fingerprints: why features separate the classes</a><br>
+    <a href="#s6">6 · The decision — an interactive classifier</a><br>
+    <a href="#s7">7 · Making it stable over time (EMA + hysteresis)</a><br>
+    <a href="#s8">8 · Spec vs shipped code: the honest divergence</a><br>
+    <a href="#s9">9 · Proving it: tune in Python, ship in C</a><br>
+    <a href="#s10">10 · Seeing it run + honest status</a>
+  </div>
+</div>
+
+
+<!-- ============================ 1 ============================ -->
+<section id="s1">
+  <div class="secnum">SECTION 01</div>
+  <h2>The problem: a check-engine light for a camera</h2>
+  <p class="big">A camera is bolted to the outside of a vehicle or robot. The systems downstream — driving,
+  navigation, recording — <strong>blindly trust whatever image arrives.</strong> But outside, in the weather, the lens
+  fogs up, frosts over, gets splattered with mud, or is partly blocked by ice or tape. A blurry feed that nobody
+  flags is dangerous: the rest of the system keeps trusting garbage.</p>
+
+  <p>Our module is the camera's <strong>check-engine light.</strong> It watches the feed and answers one question
+  every tenth of a second: <em class="t">"Can this picture be trusted, and if not, roughly why?"</em> It puts the
+  answer into one of five labels:</p>
+
+  <div class="grid3" style="margin-top:1rem">
+    <div class="card" style="border-left:3px solid var(--clean)">
+      <span class="pill clean">CLEAN</span>
+      <p style="font-size:.86rem;margin:.5rem 0 0">The lens is fine. Trust the image.</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--fog)">
+      <span class="pill fog">FOG</span>
+      <p style="font-size:.86rem;margin:.5rem 0 0">Atmospheric haze — the whole frame goes grey and low-contrast.</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--frost)">
+      <span class="pill frost">FROST</span>
+      <p style="font-size:.86rem;margin:.5rem 0 0">Ice or condensation coating the lens — bright, uniform, and severely blurred.</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--obstruction)">
+      <span class="pill obstruction">OBSTRUCTION</span>
+      <p style="font-size:.86rem;margin:.5rem 0 0">Something stuck on the lens in one spot — mud, a leaf, tape, ice.</p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--unknown)">
+      <span class="pill unknown">UNKNOWN</span>
+      <p style="font-size:.86rem;margin:.5rem 0 0">Reserved for "the signals contradict each other." (Defined, but the current code never needs it.)</p>
+    </div>
+  </div>
+
+  <div class="callout key">
+    <span class="lbl">The deliberate scope limit</span>
+    The detector <strong>only labels</strong> degradation — it never tries to <em>repair</em> the image (no
+    de-fogging, no de-blurring). Restoration is a research-grade problem that needs gigabytes and a GPU. Detection
+    is cheap, useful, and fits on a chip. <strong>Narrow scope is what makes the whole thing possible.</strong>
+    One degradation — water droplets / smear — is also deliberately excluded everywhere, because it cannot be
+    detected reliably within this budget, and a half-working safety feature is worse than none.
+  </div>
+</section>
+
+
+<!-- ============================ 2 ============================ -->
+<section id="s2">
+  <div class="secnum">SECTION 02</div>
+  <h2>The hardware that dictates every rule</h2>
+  <p class="big">Here is the single most important idea in the whole project: <strong>almost every coding rule comes
+  from one fact about the chip.</strong> Learn the chip, and the rulebook stops feeling arbitrary — you can
+  re-derive it yourself.</p>
+
+  <div class="card">
+    <h4 style="margin-top:0">What is an ARM Cortex-M0?</h4>
+    <p>Not the laptop you compile on. Picture a whole tiny computer on a single chip — a
+    <strong>microcontroller (MCU)</strong> — living <em>inside</em> the camera's image-signal processor. It has:</p>
+    <ul>
+      <li><strong>No FPU</strong> (floating-point unit) — literally no circuitry for decimal math.</li>
+      <li><strong>Kilobytes of RAM</strong>, not gigabytes. Our entire budget is <strong>under 2 KB</strong>.</li>
+      <li>A slow core clocked in tens of MHz, with <strong>no cache</strong>, <strong>shared</strong> with other jobs.</li>
+      <li>It must <strong>keep up with live video</strong> — roughly 10 frames per second.</li>
+    </ul>
+  </div>
+
+  <h3>Deriving the entire rulebook from that one fact</h3>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Hardware reality</th><th>⟶ Rule it forces</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>No FPU</td><td><strong>No <code>float</code> / <code>double</code> — anywhere</strong></td>
+        <td>Each float op would be faked by a slow software routine (<code>__aeabi_fmul</code>…). On live video that is unaffordable.</td></tr>
+      <tr><td>Tiny RAM, no heap</td><td><strong>No <code>malloc</code>/<code>free</code></strong>; static only; all sizes compile-time constants</td>
+        <td>You must <em>prove</em> RAM use stays under budget before the device runs. A heap can fragment and crash.</td></tr>
+      <tr><td>Slow, cacheless core</td><td><strong>Single pass</strong> over the image at <strong>stride 4</strong></td>
+        <td>Looping over memory is the dominant cost. One pass (not six) and skipping pixels = ~96× less work.</td></tr>
+      <tr><td>No hardware divide</td><td><strong>Bit-shifts &amp; fixed-point</strong> instead of division</td>
+        <td><code>x &gt;&gt; 4</code> divides by 16 in one cheap instruction; real division is emulated and slow.</td></tr>
+      <tr><td>No OS / console</td><td><strong>No <code>printf</code>, no <code>assert</code></strong> in the core; explicit return codes</td>
+        <td>There is nowhere to print and nothing safe to abort to in field firmware.</td></tr>
+      <tr><td>One source, two targets</td><td><strong>No <code>#ifdef</code></strong> — pure portable C99</td>
+        <td>The same <code>degradation.c</code> compiles for the PC test build <em>and</em> the ARM chip, so PC tests validate the shipped code.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout why">
+    <span class="lbl">The refrain to remember</span>
+    <strong>No FPU → no floats. Tiny RAM → static only. Slow core → single pass + stride 4. No divide → shifts.</strong>
+    Every strange-looking line later in the code is one of these four trades.
+  </div>
+
+  <h3>The memory budget, made tangible</h3>
+  <p>The one piece of state the detector keeps between frames is a single struct, <code>DegradationState</code>,
+  totalling <strong>230 bytes</strong>. Here is where every byte goes inside the 2 KB ceiling:</p>
+
+  <div class="card">
+    <div class="membar" title="230 bytes used of 2048">
+      <div class="seg-base" style="width:1.56%" title="baseline 32 B">B</div>
+      <div class="seg-thumb" style="width:9.38%" title="thumbnail 192 B">thumbnail&nbsp;192&nbsp;B</div>
+      <div class="seg-ctr" style="width:0.29%" title="counters 6 B"></div>
+      <div class="seg-free" style="width:88.77%">free headroom · ~1818 B</div>
+    </div>
+    <div class="legend" style="margin-top:.7rem">
+      <span class="lg-fast" style="--x:0"></span>
+      <span><span style="display:inline-block;width:14px;height:10px;background:var(--accent);border-radius:2px;margin-right:.35rem;vertical-align:middle"></span>EMA baseline · 32 B (16×uint16)</span>
+      <span><span style="display:inline-block;width:14px;height:10px;background:var(--frost);border-radius:2px;margin-right:.35rem;vertical-align:middle"></span>previous-frame thumbnail · 192 B (16×12)</span>
+      <span><span style="display:inline-block;width:14px;height:10px;background:var(--accent2);border-radius:2px;margin-right:.35rem;vertical-align:middle"></span>counters &amp; flags · 6 B</span>
+    </div>
+    <p style="font-size:.84rem;color:var(--muted);margin-top:.7rem">The 192-byte thumbnail (a shrunk copy of the
+    last frame, used to measure motion) is the single biggest item — and even so, we use barely a tenth of the budget.</p>
+  </div>
+</section>
+
+
+<!-- ============================ 3 ============================ -->
+<section id="s3">
+  <div class="secnum">SECTION 03</div>
+  <h2>The integer / fixed-point toolkit</h2>
+  <p class="big">If we can't use decimals, how do we compute an average, a contrast ratio, or a percentage? With a
+  handful of integer tricks that show up <em>everywhere</em> in the code. Learn them once here and the rest reads easily.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h4 style="margin-top:0">① Fixed-point: fake decimals with integers</h4>
+      <p style="font-size:.9rem">To represent <code>0.7</code> without a float, multiply by a scale first. Using
+      256 as "1.0":</p>
+      <pre><span class="c">// want 0.7, but no floats allowed</span>
+0.7 × 256 ≈ <span class="n">179</span>     <span class="c">// store 179, meaning "179/256"</span></pre>
+      <p style="font-size:.9rem">That's why you'll see contrast computed as
+      <code>(max-min) * 256 / (max+min+1)</code> — multiply <em>before</em> dividing so the fraction survives as an integer 0–255.</p>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0">② Shift instead of divide</h4>
+      <p style="font-size:.9rem">Dividing by a power of two is just sliding the bits right:</p>
+      <pre>x <span class="k">&gt;&gt;</span> 5  ==  x / 32     <span class="c">(2⁵ = 32)</span>
+x <span class="k">&gt;&gt;</span> 4  ==  x / 16
+x <span class="k">&gt;&gt;</span> 8  ==  x / 256</pre>
+      <p style="font-size:.9rem">One instruction, no divide unit needed. The histogram bins a pixel with
+      <code>pixel &gt;&gt; 5</code> (8 buckets); the EMAs divide by 16 and 256 with <code>&gt;&gt;4</code> and <code>&gt;&gt;8</code>.</p>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0">③ The <code>+1</code> divide-by-zero guard</h4>
+      <p style="font-size:.9rem">An all-black frame has <code>max = min = 0</code>, so a contrast denominator could
+      be zero. Adding <code>+1</code> makes it harmless:</p>
+      <pre>(max - min) * 256 / (max + min <span class="n">+ 1</span>)</pre>
+      <p style="font-size:.9rem">It's a deliberate safety guard, not a rounding error. You'll see the same
+      <code>+1</code> in the ratio helper.</p>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0">④ Online variance: <code>E[x²] − E[x]²</code></h4>
+      <p style="font-size:.9rem">Variance normally needs the mean first (two passes). The algebra lets us do it in
+      one pass by keeping a running <strong>sum</strong> and <strong>sum-of-squares</strong>:</p>
+      <pre>var = sumsq/n − (sum/n)²</pre>
+      <p style="font-size:.9rem">Integer flooring can make this dip <em>slightly</em> negative even though true
+      variance ≥ 0 — so the code clamps the negative case to 0.</p>
+    </div>
+  </div>
+
+  <div class="callout watch">
+    <span class="lbl">Overflow is a real enemy — and it's documented at every step</span>
+    Integers wrap around silently when they get too big. Disciplined embedded code proves it can't happen. Every
+    accumulator in the code carries a comment bounding its worst case against its ceiling. The most elegant example:
+    the slow EMA stores values up to <code>255 × 256 = 65 280</code>, which is just <strong>255 short of the
+    <code>uint16_t</code> ceiling of 65 535</strong> — <code>uint16_t</code> is the smallest type that fits, chosen on purpose.
+  </div>
+</section>
+
+
+<!-- ============================ 4 ============================ -->
+<section id="s4">
+  <div class="secnum">SECTION 04</div>
+  <h2>Turning pixels into 9 numbers — in one pass</h2>
+  <p class="big">A 320×240 frame is 76,800 pixels. We can't reason about 76,800 numbers ten times a second. So the
+  first job is to <strong>boil each frame down to ~9 small numbers</strong> ("features") that summarise it — and do
+  it as cheaply as possible.</p>
+
+  <h3>The two performance tricks, visualised</h3>
+  <p>We <strong>(a)</strong> walk the image only <em>once</em>, updating every metric as we go, and
+  <strong>(b)</strong> look at only every 4th pixel in each direction (<em class="t">stride 4</em> = 1/16 of pixels).
+  Toggle below to feel the difference:</p>
+
+  <div class="lab">
+    <div class="controls">
+      <button id="passToggle">Show: naïve (6 passes, every pixel)</button>
+      <span class="labsub" id="passLabel"></span>
+    </div>
+    <canvas id="passCanvas" width="1000" height="260"></canvas>
+    <div class="grid3" style="margin-top:.8rem">
+      <div class="card" style="padding:.8rem"><div class="meta" style="color:var(--muted)">pixels read</div><div style="font-size:1.4rem;font-weight:800" id="pxRead">—</div></div>
+      <div class="card" style="padding:.8rem"><div class="meta" style="color:var(--muted)">vs. naïve full-res</div><div style="font-size:1.4rem;font-weight:800;color:var(--green)" id="pxSpeed">—</div></div>
+      <div class="card" style="padding:.8rem"><div class="meta" style="color:var(--muted)">border skipped</div><div style="font-size:1.4rem;font-weight:800" id="pxBorder">1 px</div></div>
+    </div>
+  </div>
+  <div class="callout why">
+    <span class="lbl">Edge-safe loop bounds</span>
+    The sharpness metric needs each pixel's 4 neighbours. Rather than test "am I on the edge?" on every single pixel
+    (a branch that costs cycles 4,560 times a frame), the loop simply <strong>starts at 1 and stops one pixel early</strong>.
+    The 1-pixel border is never sampled — under 1% of the image — and neighbour reads are always safe. A classic
+    embedded trade: give up a negligible amount of data to delete a per-pixel branch.
+  </div>
+
+  <h3>The 9 features, and what each one "sees"</h3>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Feature</th><th>What it measures</th><th>How (integer formula)</th><th>Used?</th></tr></thead>
+    <tbody>
+      <tr><td><code>laplacian_var</code></td><td><strong>Sharpness / blur.</strong> A 3×3 second-derivative filter: big where there's fine detail, ~0 when blurred.</td><td><code>|4·c − up − dn − l − r|</code>, squared, averaged, <code>&gt;&gt;4</code></td><td>✅ decides</td></tr>
+      <tr><td><code>global_contrast</code></td><td><strong>Michelson contrast.</strong> How far the scene spans dark→bright. Fog collapses it.</td><td><code>(max−min)·256/(max+min+1)</code></td><td>✅ decides</td></tr>
+      <tr><td><code>histogram_spread</code></td><td><strong>Dynamic range</strong> (5th→95th percentile of brightness). Robust to a few outlier pixels.</td><td>8-bin histogram (<code>px&gt;&gt;5</code>); width × 32</td><td>✅ decides</td></tr>
+      <tr><td><code>global_mean</code></td><td><strong>Average brightness.</strong> Tells frost (bright) from a dark covered lens.</td><td><code>sum / count</code></td><td>✅ decides</td></tr>
+      <tr><td><code>obstruction_score</code></td><td><strong>How many of the 12 cells are "flat"</strong> (low texture) at any brightness — something stuck on.</td><td>count of cells with cell-variance <code>&lt; 8</code></td><td>✅ decides</td></tr>
+      <tr><td><code>cell_mean_variance</code></td><td><strong>Spatial non-uniformity.</strong> Do the 12 regions look alike (fog) or wildly different (a blob)?</td><td>variance of the 12 cell means, <code>&gt;&gt;6</code></td><td>✅ decides</td></tr>
+      <tr><td><code>occlusion_score</code></td><td>Flat cells that are <em>also dark</em> — the mud/dirt fingerprint.</td><td>flat <strong>and</strong> <code>mean &lt; global_mean/2</code></td><td>🔎 diagnostic</td></tr>
+      <tr><td><code>temporal_mad</code></td><td>How much the picture changed since last frame (motion), via the 16×12 thumbnail.</td><td>smoothed mean-abs-difference</td><td>📈 reported</td></tr>
+      <tr><td><code>temporal_mad_var</code></td><td>Sudden spikes in that motion — a change detector.</td><td><code>|raw − smoothed|</code></td><td>📈 reported</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="callout key">
+    <span class="lbl">Computed ≠ used — a crucial distinction</span>
+    The detector <strong>computes 9 features, but the classifier only reads 6 of them.</strong>
+    <code>occlusion_score</code> is kept purely as a diagnostic (it shades the dark-blob cells in the live viewer);
+    the two temporal features are reported for logging. A beginner naturally assumes "everything computed feeds the
+    decision" — here it doesn't, and knowing that prevents a real misconception.
+  </div>
+
+  <h3>The spatial grid: how we tell <em>local</em> from <em>global</em></h3>
+  <p>The frame is divided into a <strong>4×3 grid of 12 cells</strong>. For each cell we keep a sum and sum-of-squares
+  (so we get its mean and variance in one pass). This is the single most important structural idea in the feature set:
+  fog and frost degrade <em>every</em> cell equally, but a mud blob makes <em>some</em> cells look completely different
+  from others. Click cells below to "block" them and watch the scores the classifier actually reads:</p>
+
+  <div class="lab">
+    <div class="labhead"><div class="labttl">Interactive grid — build an obstruction</div></div>
+    <p class="labsub">Click a cell to cycle <span style="color:#cfd6e6">normal</span> →
+      <span style="color:#fff">flat&amp;bright (tape/ice)</span> → <span style="color:#8a93ad">flat&amp;dark (mud)</span> → normal.</p>
+    <div class="gridwrap" style="margin-top:.8rem">
+      <div class="cgrid" id="cgrid"></div>
+      <div class="scoreboard">
+        <div><span class="k">obstruction_score</span> = <span class="v" id="sb-obs">0</span> <span style="color:var(--dim)">/ 12 flat cells</span></div>
+        <div><span class="k">occlusion_score&nbsp;</span> = <span class="v" id="sb-occ">0</span> <span style="color:var(--dim)">(flat &amp; dark)</span></div>
+        <div><span class="k">cell_mean_variance</span> = <span class="v" id="sb-cvar">0</span></div>
+        <div style="margin-top:.6rem"><span class="k">cell_obs_mask</span> = <span class="mask" id="sb-omask">000000000000</span></div>
+        <div><span class="k">cell_occ_mask</span> = <span class="mask" id="sb-cmask">000000000000</span></div>
+        <div style="margin-top:.8rem;padding-top:.6rem;border-top:1px solid var(--border)">
+          <span class="k">verdict on these 2 inputs:</span><br>
+          <span id="sb-verdict" style="font-weight:800;font-size:1.05rem">CLEAN</span>
+        </div>
+        <div style="font-size:.74rem;color:var(--dim);margin-top:.4rem">OBSTRUCTION needs
+          <code>obs ≥ 3</code> <em>and</em> <code>cell_mean_variance ≥ 60</code>.</div>
+      </div>
+    </div>
+  </div>
+  <p style="font-size:.84rem;color:var(--muted)">Notice the bitmask: those 12 yes/no cell flags pack into a single
+  16-bit integer (<code>(mask &gt;&gt; i) &amp; 1</code> reads cell <code>i</code>) — a standard embedded space-saver.</p>
+</section>
+
+
+<!-- ============================ 5 ============================ -->
+<section id="s5">
+  <div class="secnum">SECTION 05</div>
+  <h2>The fingerprints: why the features separate the classes</h2>
+  <p class="big">Here's the catch that drives the whole design: <strong>fog, frost, and a blocked lens all reduce
+  sharpness.</strong> No single number can tell them apart. But each cause leaves a unique <em>combination</em> —
+  like a doctor reading temperature <em>and</em> blood pressure <em>and</em> symptoms together, never one alone.</p>
+
+  <div class="grid2">
+    <div class="fp">
+      <div class="fphead" style="background:var(--clean)">CLEAN — trust it</div>
+      <div class="fpbody">
+        <div class="mini"><i style="height:30%"></i><i style="height:70%"></i><i style="height:90%"></i><i style="height:100%"></i><i style="height:80%"></i><i style="height:55%"></i><i style="height:40%"></i><i style="height:25%"></i></div>
+        <div class="ug"><span style="background:#56607a"></span><span style="background:#515c75"></span><span style="background:#586280"></span><span style="background:#525d77"></span><span style="background:#586280"></span><span style="background:#4e5972"></span><span style="background:#586280"></span><span style="background:#525d77"></span></div>
+        <div class="meta">sharp ✔ · good contrast ✔ · wide histogram ✔ · uniform</div>
+      </div>
+    </div>
+    <div class="fp">
+      <div class="fphead" style="background:var(--fog)">FOG — grey veil, everywhere</div>
+      <div class="fpbody">
+        <div class="mini"><i style="height:5%"></i><i style="height:15%"></i><i style="height:75%"></i><i style="height:100%"></i><i style="height:80%"></i><i style="height:18%"></i><i style="height:6%"></i><i style="height:3%"></i></div>
+        <div class="ug"><span style="background:#8a93a6"></span><span style="background:#878e9b"></span><span style="background:#8b92a2"></span><span style="background:#888f9c"></span><span style="background:#898f9d"></span><span style="background:#8a91a0"></span><span style="background:#888e9b"></span><span style="background:#8a91a0"></span></div>
+        <div class="meta">contrast &lt;40 · blur 5–15 · mid-tones · uniform · lit</div>
+      </div>
+    </div>
+    <div class="fp">
+      <div class="fphead" style="background:var(--frost)">FROST — bright, blurred coat</div>
+      <div class="fpbody">
+        <div class="mini"><i style="height:2%"></i><i style="height:3%"></i><i style="height:6%"></i><i style="height:12%"></i><i style="height:30%"></i><i style="height:75%"></i><i style="height:100%"></i><i style="height:90%"></i></div>
+        <div class="ug"><span style="background:#cfd8ea"></span><span style="background:#d3dcee"></span><span style="background:#cdd6e8"></span><span style="background:#d1daec"></span><span style="background:#cfd8ea"></span><span style="background:#d3dcee"></span><span style="background:#ccd5e7"></span><span style="background:#d1daec"></span></div>
+        <div class="meta">blur &lt;5 (near zero!) · very bright · uniform</div>
+      </div>
+    </div>
+    <div class="fp">
+      <div class="fphead" style="background:var(--obstruction)">OBSTRUCTION — local blob</div>
+      <div class="fpbody">
+        <div class="mini"><i style="height:60%"></i><i style="height:80%"></i><i style="height:30%;background:#4a5168"></i><i style="height:20%;background:#4a5168"></i><i style="height:70%"></i><i style="height:90%"></i><i style="height:40%"></i><i style="height:55%"></i></div>
+        <div class="ug"><span style="background:#1a2030"></span><span style="background:#1a2030"></span><span style="background:#586280"></span><span style="background:#586280"></span><span style="background:#1a2030"></span><span style="background:#586280"></span><span style="background:#586280"></span><span style="background:#586280"></span></div>
+        <div class="meta">some flat cells · <strong style="color:var(--obstruction)">very non-uniform</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout key">
+    <span class="lbl">The cleverest insight in the project: blur &lt; 5 vs blur &lt; 15</span>
+    <strong>On-lens coatings vs. atmospheric haze.</strong> Ice or condensation <em>on the glass</em> destroys all
+    fine detail — the Laplacian collapses to near <strong>zero</strong> (<code>&lt; 5</code>). Fog is <em>in the
+    air</em>; it softens the image but detail survives a bit (<code>5–15</code>). That one threshold split — where
+    the blur is coming from — is what cleanly separates FROST from FOG.
+  </div>
+
+  <div class="callout watch">
+    <span class="lbl">The dark-scene guard (a micro-lesson worth its own line)</span>
+    A pitch-black night scene satisfies <em>every</em> fog condition: low contrast ✔, low spread ✔, low sharpness ✔,
+    uniform ✔. Without a guard it would be falsely called FOG. So FOG additionally requires
+    <code>global_mean &gt; 40</code> — "there has to be some light." This is exactly why the test suite includes a
+    15-frame pitch-dark segment: to prove darkness stays <span class="pill clean">CLEAN</span>.
+  </div>
+</section>
+
+
+<!-- ============================ 6 ============================ -->
+<section id="s6">
+  <div class="secnum">SECTION 06</div>
+  <h2>The decision — try it yourself</h2>
+  <p class="big">The classifier is a simple <strong>if / else-if ladder</strong> tested in strict priority order:
+  <span class="pill obstruction">OBSTRUCTION</span> →
+  <span class="pill frost">FROST</span> →
+  <span class="pill fog">FOG</span> →
+  <span class="pill clean">CLEAN</span>. <strong>First match wins.</strong> No machine learning, no baseline —
+  just fixed numeric cutoffs on this frame's raw features. Drag the sliders (or pick a scenario) and watch which
+  branch fires and why.</p>
+
+  <div class="lab">
+    <div class="labhead">
+      <div><div class="labttl">Live classifier — the real logic, in your browser</div>
+      <div class="labsub">These six features are the exact inputs <code>classify_absolute()</code> reads.</div></div>
+    </div>
+    <div class="presets">
+      <button data-p="clean">☀️ Clean scene</button>
+      <button data-p="fog">🌫️ Rolling fog</button>
+      <button data-p="frost">❄️ Iced lens</button>
+      <button data-p="obs">🟤 Mud blob</button>
+      <button data-p="dark">🌑 Dark night (stays clean!)</button>
+    </div>
+    <div class="sliders" id="sliders"></div>
+
+    <div class="verdict">
+      <div>
+        <div class="labsub" style="margin-bottom:.1rem">VERDICT (this frame)</div>
+        <span class="big" id="vClass">CLEAN</span>
+      </div>
+      <div class="conf">confidence = <span id="vConf">0</span> / 255</div>
+    </div>
+
+    <div class="cascade" id="cascade"></div>
+  </div>
+
+  <div class="callout gotcha">
+    <span class="lbl">Looks like a bug — but it's intentional</span>
+    The FROST branch <em>fires</em> when sharpness <code>&lt; 5</code>, but computes its confidence as
+    <code>(15 − sharpness) × 10</code> — using the <em>other</em> threshold (15). So the instant FROST fires,
+    confidence is already <code>≥ 110</code>. That's deliberate: a confirmed on-lens coating is a strong, high-confidence
+    call. We flag it here so you don't read it as an error.
+  </div>
+
+  <h3>The exact thresholds (and two that are reserved)</h3>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Constant</th><th>Value</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>DEGR_THR_LAP_FROST</code></td><td>5</td><td>Below this sharpness = severe on-lens blur (frost gate)</td></tr>
+      <tr><td><code>DEGR_THR_LAP_BLUR</code></td><td>15</td><td>Below this = moderate blur (fog gate); also frost confidence scale</td></tr>
+      <tr><td><code>DEGR_THR_CONTRAST_LOW</code></td><td>40</td><td>Below this contrast = fog candidate</td></tr>
+      <tr><td><code>DEGR_THR_SPREAD_FOG</code></td><td>96</td><td>Below this dynamic range = compressed (fog)</td></tr>
+      <tr><td><code>DEGR_THR_MEAN_BRIGHT</code></td><td>60</td><td>Mean must exceed this for FROST (scene is lit)</td></tr>
+      <tr><td><code>DEGR_THR_MEAN_FLOOR</code></td><td>40</td><td>Mean must exceed this for FOG (rules out darkness)</td></tr>
+      <tr><td><code>DEGR_THR_CELLVAR_UNIFORM</code></td><td>50</td><td>Below this = spatially uniform (fog / frost)</td></tr>
+      <tr><td><code>DEGR_THR_CELLVAR_LOCAL</code></td><td>60</td><td>At/above this = localized (obstruction)</td></tr>
+      <tr><td><code>DEGR_THR_OBS_CELLS</code></td><td>3</td><td>Flat cells needed to call OBSTRUCTION</td></tr>
+      <tr style="opacity:.6"><td><code>DEGR_THR_SPREAD_FROST</code></td><td>128</td><td><em>Defined but not wired into any branch — reserved.</em></td></tr>
+      <tr style="opacity:.6"><td><code>DEGR_THR_OCC_CELLS</code></td><td>2</td><td><em>Diagnostic only — does not gate the decision.</em></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+
+<!-- ============================ 7 ============================ -->
+<section id="s7">
+  <div class="secnum">SECTION 07</div>
+  <h2>Making it stable over time</h2>
+  <p class="big">A per-frame verdict alone would be jittery and noisy. Two temporal mechanisms turn a math demo into
+  reliable firmware: <strong>smoothed baselines (EMA)</strong> and <strong>hysteresis</strong>.</p>
+
+  <h3>Exponential moving averages — a running average that gently forgets</h3>
+  <p>An EMA nudges a stored average a little toward each new reading. The whole update is one line, and — because
+  the fraction is a power of two — it uses only a shift and adds, no division:</p>
+  <pre><span class="k">ema</span> = ema − (ema <span class="k">&gt;&gt;</span> shift) + raw;   <span class="c">// shift 4 → α=1/16 (fast),  shift 8 → α=1/256 (slow)</span></pre>
+  <p>We keep <strong>two</strong> timescales. The <strong style="color:var(--frost)">fast</strong> EMA reacts in ~16
+  frames; the <strong style="color:var(--orange)">slow</strong> EMA barely moves over ~256 frames — a stable
+  "what clean looks like" reference. Feed a signal below and watch them track:</p>
+
+  <div class="chartbox">
+    <div class="controls">
+      <button id="emaRegen">↻ New signal</button>
+      <label><input type="checkbox" id="emaFreeze" checked> Freeze slow EMA during the degradation event</label>
+    </div>
+    <canvas id="emaCanvas" width="1000" height="280"></canvas>
+    <div class="legend">
+      <span class="lg-raw">raw feature (noisy)</span>
+      <span class="lg-fast">fast EMA · α=1/16</span>
+      <span class="lg-slow">slow EMA · α=1/256</span>
+    </div>
+  </div>
+  <div class="callout why">
+    <span class="lbl">Why freeze the slow EMA during a fault?</span>
+    If the "clean reference" kept absorbing frames during a long fog event, it would slowly adapt <em>to</em> the fog
+    and forget what clean ever looked like. So the slow EMA is frozen whenever a degradation is confirmed. Toggle the
+    checkbox above to see it flatline through the event instead of drifting upward.
+    <br><br><strong>A subtlety worth knowing:</strong> in today's code the classifier is purely absolute-threshold,
+    so these EMAs are <em>maintained but not actually read by the decision</em>. They back the motion metric and the
+    save-to-flash feature, and are kept ready for a future "relative" mode.
+  </div>
+
+  <h3>Hysteresis — the thermostat principle</h3>
+  <p>A thermostat doesn't flip the heater on and off every few seconds. Likewise, we demand <strong>sustained
+  evidence</strong> before changing the reported state. It is deliberately <em>asymmetric</em>:</p>
+  <ul>
+    <li><strong>5 consecutive</strong> degraded frames to <em>raise</em> an alarm (slow to cry wolf).</li>
+    <li><strong>15 consecutive</strong> clean frames to <em>clear</em> it (even slower to declare "all fixed").</li>
+    <li>Switching between two <em>different</em> faults (e.g. frost → obstruction) happens immediately.</li>
+  </ul>
+  <p>Press play to step a stream of raw per-frame guesses (with deliberate single-frame glitches) through the state
+  machine. The top row is the raw guess; the bottom row is what the system actually <em>reports</em>:</p>
+
+  <div class="chartbox">
+    <div class="controls">
+      <button id="hysPlay">▶ Play</button>
+      <button id="hysReset">↺ Reset</button>
+      <span class="labsub">enter counter: <b id="hysConfirm" style="color:var(--frost)">0</b>/5 ·
+        clear counter: <b id="hysClear" style="color:var(--orange)">0</b>/15</span>
+    </div>
+    <div style="font-size:.74rem;color:var(--muted);margin:.2rem 0">raw guess →</div>
+    <div class="eqtrack" id="hysRaw"></div>
+    <div style="font-size:.74rem;color:var(--muted);margin:.2rem 0">reported (after hysteresis) →</div>
+    <div class="eqtrack" id="hysRep"></div>
+  </div>
+  <p style="font-size:.84rem;color:var(--muted)">Watch how the lone fog glitch early on never raises an alarm (the
+  enter-counter resets), and how the system stays alarmed through a brief "clean" flicker (the clear-counter resets).
+  That stickiness is the whole point.</p>
+
+  <div class="callout key">
+    <span class="lbl">Warmup is advisory, not a gate</span>
+    There's a 60-frame (~6 s) warmup so the slow baseline can settle. But the classifier runs from <strong>frame
+    1</strong> — warmup just sets a flag a host app <em>may</em> use to ignore early output. The library never
+    suppresses anything itself.
+  </div>
+</section>
+
+
+<!-- ============================ 8 ============================ -->
+<section id="s8">
+  <div class="secnum">SECTION 08</div>
+  <h2>Spec vs shipped code — the honest divergence</h2>
+  <p class="big">This is the most valuable real-world lesson in the project: <strong>the design evolved away from its
+  original specification, and the code — not the spec — is the source of truth.</strong> The brief
+  (<code>project_brief.md</code> / <code>CLAUDE.md</code>) describes one design; <code>degradation.c</code> ships a
+  simpler, more robust one. A disciplined project keeps a reference oracle and an equivalence test precisely so this
+  drift is caught and controlled.</p>
+
+  <div class="grid2">
+    <div class="card" style="border-left:3px solid var(--dim)">
+      <h4 style="margin-top:0;color:var(--muted)">📄 What the brief describes</h4>
+      <ul style="font-size:.9rem">
+        <li>A <strong>baseline-relative ratio</strong> classifier: <code>ratio = current·128 / (baseline+1)</code></li>
+        <li><strong>6 classes</strong>, including a separate <code>DIRT</code> and an emitted <code>UNKNOWN</code></li>
+        <li>Decisions made by comparing each feature to its learned EMA baseline</li>
+      </ul>
+    </div>
+    <div class="card" style="border-left:3px solid var(--accent)">
+      <h4 style="margin-top:0;color:var(--accent)">✅ What the code actually ships</h4>
+      <ul style="font-size:.9rem">
+        <li><strong>Absolute thresholds</strong> — no ratio code exists in <code>degradation.c</code> at all</li>
+        <li><strong>5 classes defined, 4 emitted</strong>: <code>DIRT</code> folded into <code>OBSTRUCTION</code>; <code>UNKNOWN</code> never returned</li>
+        <li>The EMA baseline is computed every frame but the decision tree never reads it</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout why">
+    <span class="lbl">Why DIRT was merged into OBSTRUCTION</span>
+    Think about the operator's response. A dark blob (mud) and a bright blob (tape, ice) lead to the
+    <em>same</em> action: <strong>clean the lens.</strong> So the two collapse into one <code>OBSTRUCTION</code> verdict.
+    The dark-blob signal is still surfaced separately as <code>occlusion_score</code> for diagnostics — useful to a
+    human, but it doesn't change the decision.
+  </div>
+
+  <div class="callout watch">
+    <span class="lbl">Why absolute thresholds won</span>
+    Absolute cutoffs are <strong>far easier to tune</strong> (expose the lens to fog, watch the raw number, set the
+    line) and they make <strong>exact Python⇄C equivalence trivial to verify</strong> — there's no warmup-convergence
+    state to reproduce. The ratio machinery wasn't deleted; it was demoted to dormant, ready for a future
+    relative mode. <strong>The takeaway: when the docs and the code disagree, trust the code — and keep a test that
+    proves which is true.</strong>
+  </div>
+</section>
+
+
+<!-- ============================ 9 ============================ -->
+<section id="s9">
+  <div class="secnum">SECTION 09</div>
+  <h2>Proving it: tune in Python, ship in C</h2>
+  <p class="big">How do you <em>trust</em> hand-written integer firmware? You keep a second implementation in Python
+  — <code>detector.py</code> — that is a <strong>bit-for-bit integer port</strong> of the C, and you prove they
+  produce identical output on every frame.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <h4 style="margin-top:0">The oracle: <code>detector.py</code></h4>
+      <p style="font-size:.9rem">Not a loose prototype — a faithful port. It uses NumPy only to <em>sample</em>
+      pixels; all the arithmetic uses <code>//</code> (floor division) and <code>&gt;&gt;</code> to mimic C integer
+      truncation exactly. Every threshold constant is duplicated verbatim from <code>degradation.h</code>. You tune
+      features here (fast, inspectable), then mirror them into C.</p>
+    </div>
+    <div class="card">
+      <h4 style="margin-top:0">The proof: <code>equiv_check.py</code></h4>
+      <p style="font-size:.9rem">It builds a deterministic <strong>165-frame</strong> synthetic stream, runs it
+      through <em>both</em> the Python oracle and the compiled C harness, and compares all 12 output columns on every
+      frame <strong>as strings</strong> — the strictest possible check. Any rounding, shift, or overflow difference
+      shows up instantly.</p>
+    </div>
+  </div>
+
+  <h3>The synthetic test stream</h3>
+  <p>Each segment is hand-crafted to push one feature into one threshold band, so each provably exercises one class
+  (e.g. the fog frame uses a tiny checker pattern tuned so sharpness lands at ~9 — inside the 5–15 fog band, not the
+  &lt;5 frost band). Press run to scan the equivalence check:</p>
+
+  <div class="chartbox">
+    <div class="controls"><button id="eqRun">▶ Run equivalence check</button>
+      <span class="labsub" id="eqStatus">165 frames × 12 columns — ready</span></div>
+    <div class="eqgut" id="eqGutter"></div>
+    <div class="eqtrack" id="eqStream"></div>
+    <div class="legend" style="margin-top:.5rem">
+      <span><span class="pill clean" style="padding:0 .4rem">▬</span> clean</span>
+      <span><span class="pill fog" style="padding:0 .4rem">▬</span> fog</span>
+      <span><span class="pill frost" style="padding:0 .4rem">▬</span> frost</span>
+      <span><span class="pill obstruction" style="padding:0 .4rem">▬</span> obstruction</span>
+      <span style="color:var(--dim)">▬ dark→clean</span>
+    </div>
+  </div>
+
+  <div class="callout key">
+    <span class="lbl">Why exact equality is even possible</span>
+    Bit-identical agreement across two languages is only achievable because the algorithm is <strong>pure integer
+    math</strong>. The instant a single <code>float</code> entered, rounding would differ and a string-exact diff
+    would be impossible. <strong>The no-float rule and the verification strategy are the same decision</strong> —
+    that's the loop closing.
+  </div>
+</section>
+
+
+<!-- ============================ 10 ============================ -->
+<section id="s10">
+  <div class="secnum">SECTION 10</div>
+  <h2>Seeing it run — and an honest status</h2>
+  <p class="big">Two PC-only tools let us watch the exact same firmware in action, without touching the embedded core.</p>
+
+  <h3>The live viewer (<code>live_view.cpp</code>) — driving the firmware unchanged</h3>
+  <p>This C++/OpenCV tool grabs webcam or video frames, converts them to grayscale, and hands the raw bytes to the
+  <em>identical</em> <code>degradation_update()</code> that compiles for the Cortex-M0. What you see on screen is
+  bit-for-bit what the chip would decide — which makes it the real tuning interface.</p>
+
+  <div class="flow">
+    <div class="fstep"><span class="ft">📹 webcam / video file</span> <span class="fd">cv::VideoCapture</span></div>
+    <div class="farr">↓</div>
+    <div class="fstep"><span class="ft">grayscale + force contiguous</span> <span class="fd">cvtColor → BGR2GRAY; clone() if row-padded, to honour the "packed row-major" contract</span></div>
+    <div class="farr">↓</div>
+    <div class="fstep core"><span class="ft">⚙️ degradation_update() — the UNCHANGED embedded C core</span> <span class="fd">linked via <code>extern "C"</code> so the C++ build resolves the plain C symbol</span></div>
+    <div class="farr">↓</div>
+    <div class="fstep"><span class="ft">🖥️ overlay</span> <span class="fd">class-coloured border · 4×3 grid shading · per-feature bars with threshold ticks &amp; pass/fail dots</span></div>
+  </div>
+
+  <div class="callout why">
+    <span class="lbl"><code>extern "C"</code> — the C++ ↔ C bridge</span>
+    C++ "mangles" function names (it encodes argument types into the symbol). C doesn't. Wrapping the header in
+    <code>extern "C" { … }</code> tells the C++ compiler to look up the plain, un-mangled C name at link time — so the
+    call resolves to the real firmware object with zero adapters and zero changes to the embedded code. The whole
+    "same code on screen as on the chip" guarantee rests on this plus the packed-buffer check.
+  </div>
+
+  <h3>The batch harness (<code>test_harness.c</code>)</h3>
+  <p>The only core-adjacent file allowed to use <code>stdio.h</code>. It reads <strong>headerless raw frames</strong>
+  (just <code>width×height</code> bytes back-to-back, exactly what a camera DMAs into memory — produce them from any
+  video with <code>ffmpeg … -f rawvideo -vf "scale=320:240,format=gray"</code>), runs the core, and writes a CSV of
+  every feature so you can plot a metric collapsing as fog rolls in. It processes every 3rd frame, turning 30 fps into
+  the firmware's ~10 Hz cadence.</p>
+
+  <h3>Where we are — verified vs. pending</h3>
+  <div class="grid2">
+    <div class="card" style="border-left:3px solid var(--green)">
+      <h4 style="margin-top:0;color:var(--green)">✓ Verified working</h4>
+      <ul style="font-size:.9rem">
+        <li>PC build compiles clean (<code>-Wall -Wextra -std=c99</code>)</li>
+        <li>Batch CSV harness runs on raw frame streams</li>
+        <li>OpenCV live viewer drives the unchanged core</li>
+        <li><strong>Python ⇄ C equivalence: 165 frames × 12 columns, identical</strong></li>
+      </ul>
+    </div>
+    <div class="card" style="border-left:3px solid var(--yellow)">
+      <h4 style="margin-top:0;color:var(--yellow)">◷ Still pending</h4>
+      <ul style="font-size:.9rem">
+        <li>ARM build with <code>arm-none-eabi-gcc</code> (toolchain not yet installed)</li>
+        <li>The no-floating-point disassembly check (<code>objdump … | grep __aeabi_f*</code> must be empty)</li>
+        <li>Static-RAM <code>nm</code> check confirming &lt; 2 KB on target</li>
+        <li>Tuning thresholds against real-world footage</li>
+      </ul>
+    </div>
+  </div>
+  <div class="callout watch">
+    <span class="lbl">Modeling intellectual honesty</span>
+    We do <strong>not</strong> claim the ARM-target checks pass — they haven't been run. Being precise about what is
+    and isn't proven is itself part of doing embedded work well.
+  </div>
+</section>
+
+<div class="card tint" style="margin-top:2rem">
+  <h3 style="margin-top:0">The one-paragraph recap</h3>
+  <p>A tiny, FPU-less, sub-2KB ARM chip must flag a degraded camera in real time. That single constraint forces
+  integer-only, single-pass, shift-based code. One stride-4 pass turns each frame into ~9 cheap features; six of them
+  feed a priority if-ladder (<span class="pill obstruction">OBSTRUCTION</span> →
+  <span class="pill frost">FROST</span> → <span class="pill fog">FOG</span> →
+  <span class="pill clean">CLEAN</span>) that reads the <em>combination</em> of features — because no single number
+  separates the causes. Asymmetric hysteresis (5 in / 15 out) kills flicker. The design evolved from the brief's
+  ratio scheme to simpler absolute thresholds, and a bit-exact Python oracle plus a 165-frame equivalence test prove
+  the C is correct. PC, Python, and the live viewer all check out; the ARM-target verification is the honest
+  next step.</p>
+</div>
+
+<div class="foot">
+  <p>Generated as a teaching companion to the camera-degradation project · source of truth is the code in
+  <code>degradation.h</code>, <code>degradation.c</code>, <code>detector.py</code>, and <code>equiv_check.py</code>.
+  All interactive widgets implement the real logic from <code>classify_absolute()</code>.</p>
+</div>
+
+</div><!-- /wrap -->
+
+<script>
+"use strict";
+
+/* ============================================================
+   Class colours (matched to the live viewer)
+============================================================ */
+const COLORS = {CLEAN:'#3ecf8e', FOG:'#9aa3b4', FROST:'#74b9ff', OBSTRUCTION:'#f0574b', UNKNOWN:'#a78bfa'};
+
+/* ============================================================
+   SECTION 6 — interactive classifier (exact port of classify_absolute)
+============================================================ */
+const FEATURES = [
+  {id:'lap',  name:'laplacian_var (sharpness)', min:0, max:255, val:80},
+  {id:'ctr',  name:'global_contrast',           min:0, max:255, val:120},
+  {id:'spr',  name:'histogram_spread',          min:0, max:224, val:160},
+  {id:'mean', name:'global_mean (brightness)',  min:0, max:255, val:110},
+  {id:'obs',  name:'obstruction_score',         min:0, max:12,  val:0},
+  {id:'cvar', name:'cell_mean_variance',        min:0, max:255, val:20},
+];
+const PRESETS = {
+  clean:{lap:80,ctr:120,spr:160,mean:110,obs:0,cvar:20},
+  fog:  {lap:9, ctr:25, spr:64, mean:118,obs:0,cvar:20},
+  frost:{lap:2, ctr:30, spr:60, mean:205,obs:0,cvar:15},
+  obs:  {lap:40,ctr:90, spr:120,mean:100,obs:5,cvar:80},
+  dark: {lap:3, ctr:10, spr:32, mean:5,  obs:0,cvar:10},
+};
+const state = {};
+FEATURES.forEach(f=>state[f.id]=f.val);
+
+function u8(x){ x=Math.round(x); return x<0?0:(x>255?255:x); }
+
+// faithful translation of classify_absolute()
+function classify(f){
+  const {lap,ctr,spr,mean,obs,cvar} = f;
+  if (obs>=3 && cvar>=60){
+    const c = u8((obs-3+1)*50 + (cvar-60)*2);
+    return {cls:'OBSTRUCTION', conf:c, branch:'OBSTRUCTION'};
+  }
+  if (lap<5 && mean>60 && cvar<50){
+    return {cls:'FROST', conf:u8((15-lap)*10), branch:'FROST'};
+  }
+  if (ctr<40 && lap<15 && spr<96 && cvar<50 && mean>40){
+    return {cls:'FOG', conf:u8((40-ctr)*6), branch:'FOG'};
+  }
+  return {cls:'CLEAN', conf:0, branch:'CLEAN'};
+}
+
+// describe each branch's conditions for the cascade UI
+function branchConds(f){
+  const {lap,ctr,spr,mean,obs,cvar}=f;
+  return {
+    OBSTRUCTION:[['obs ≥ 3',obs>=3],['cvar ≥ 60',cvar>=60]],
+    FROST:[['lap < 5',lap<5],['mean > 60',mean>60],['cvar < 50',cvar<50]],
+    FOG:[['ctr < 40',ctr<40],['lap < 15',lap<15],['spr < 96',spr<96],['cvar < 50',cvar<50],['mean > 40',mean>40]],
+  };
+}
+
+function buildSliders(){
+  const root=document.getElementById('sliders');
+  FEATURES.forEach(f=>{
+    const row=document.createElement('div'); row.className='slider-row';
+    row.innerHTML=`<label><span class="nm">${f.name}</span><span class="vv" id="v-${f.id}">${f.val}</span></label>
+      <input type="range" id="r-${f.id}" min="${f.min}" max="${f.max}" value="${f.val}">`;
+    root.appendChild(row);
+    row.querySelector('input').addEventListener('input',e=>{
+      state[f.id]=+e.target.value;
+      document.getElementById('v-'+f.id).textContent=e.target.value;
+      renderClassifier();
+    });
+  });
+}
+function applyPreset(p){
+  const v=PRESETS[p];
+  FEATURES.forEach(f=>{
+    state[f.id]=v[f.id];
+    document.getElementById('r-'+f.id).value=v[f.id];
+    document.getElementById('v-'+f.id).textContent=v[f.id];
+  });
+  renderClassifier();
+}
+function renderClassifier(){
+  const r=classify(state);
+  const vC=document.getElementById('vClass');
+  vC.textContent=r.cls; vC.style.color=COLORS[r.cls];
+  document.getElementById('vConf').textContent=r.conf;
+
+  const conds=branchConds(state);
+  const order=['OBSTRUCTION','FROST','FOG'];
+  const cas=document.getElementById('cascade');
+  cas.innerHTML='';
+  order.forEach(b=>{
+    const allPass=conds[b].every(c=>c[1]);
+    const fired=(r.branch===b);
+    const div=document.createElement('div');
+    div.className='branch'+(fired?' fired':'');
+    if(fired) div.style.borderColor=COLORS[b];
+    let chips=conds[b].map(c=>`<span class="cond ${c[1]?'pass':'fail'}">${c[1]?'✓':'✗'} ${c[0]}</span>`).join('');
+    div.innerHTML=`<div class="bttl"><span style="color:${COLORS[b]}">${b}</span>
+      <span style="color:var(--muted);font-weight:500;font-size:.78rem">${fired?'◀ FIRES':(allPass?'(would fire, but a higher branch won)':'not all conditions met')}</span></div>
+      <div class="conds">${chips}</div>`;
+    cas.appendChild(div);
+  });
+  // CLEAN fallback row
+  const div=document.createElement('div');
+  const fired=(r.branch==='CLEAN');
+  div.className='branch'+(fired?' fired':'');
+  if(fired) div.style.borderColor=COLORS.CLEAN;
+  div.innerHTML=`<div class="bttl"><span style="color:${COLORS.CLEAN}">CLEAN</span>
+    <span style="color:var(--muted);font-weight:500;font-size:.78rem">${fired?'◀ default — nothing else fired':'—'}</span></div>`;
+  cas.appendChild(div);
+}
+document.querySelectorAll('.presets button').forEach(b=>
+  b.addEventListener('click',()=>applyPreset(b.dataset.p)));
+buildSliders(); renderClassifier();
+
+/* ============================================================
+   SECTION 4 — single-pass / stride-4 visual
+============================================================ */
+(function(){
+  const cv=document.getElementById('passCanvas'), ctx=cv.getContext('2d');
+  const cols=64, rows=16, cw=cv.width/cols, ch=cv.height/rows;
+  let naive=true, t=0;
+  const btn=document.getElementById('passToggle');
+  const lab=document.getElementById('passLabel');
+  function stats(){
+    // illustrative numbers for 320x240
+    const total=320*240;
+    if(naive){
+      document.getElementById('pxRead').textContent=(total*6).toLocaleString()+' reads';
+      document.getElementById('pxSpeed').textContent='1× (baseline)';
+    }else{
+      const reads=Math.round(total/16);
+      document.getElementById('pxRead').textContent=reads.toLocaleString()+' reads';
+      document.getElementById('pxSpeed').textContent='~96× fewer';
+    }
+    lab.textContent = naive ? '6 separate loops, every pixel touched 6×'
+                            : '1 loop, only every 4th pixel — all metrics at once';
+  }
+  function draw(){
+    ctx.clearRect(0,0,cv.width,cv.height);
+    const sweep = (t% (naive?cols*1.4:cols)) ;
+    for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
+      const border=(x===0||y===0||x===cols-1||y===rows-1);
+      let on;
+      if(naive){ on = x<=sweep; }
+      else { on = (x%4===0 && y%4===0) && !border && x<=sweep; }
+      ctx.fillStyle = on ? (naive?'#4f8ef7':'#74b9ff')
+                         : ( (!naive && border) ? '#1a1d27' : '#262b40');
+      ctx.fillRect(x*cw+1,y*ch+1,cw-2,ch-2);
+    }
+    // sweep line
+    ctx.fillStyle='rgba(255,255,255,.5)';
+    ctx.fillRect(Math.min(sweep,cols-1)*cw,0,2,cv.height);
+    t+= naive?0.55:0.4;
+    requestAnimationFrame(draw);
+  }
+  btn.addEventListener('click',()=>{
+    naive=!naive; t=0;
+    btn.textContent = naive ? 'Show: naïve (6 passes, every pixel)'
+                            : 'Show: this design (1 pass, stride 4)';
+    stats();
+  });
+  stats(); draw();
+})();
+
+/* ============================================================
+   SECTION 4 — interactive 4x3 grid (faithful obstruction/cvar math)
+============================================================ */
+(function(){
+  const N=12, COLS=4;
+  const cells=new Array(N).fill(0); // 0 normal, 1 flat-bright, 2 flat-dark
+  const MEAN={0:110,1:240,2:20};    // representative cell means
+  const grid=document.getElementById('cgrid');
+  function cls(s){return s===1?'bright':(s===2?'dark':'normal');}
+  function label(s){return s===1?'flat':(s===2?'flat':'·');}
+  function render(){
+    grid.innerHTML='';
+    cells.forEach((s,i)=>{
+      const d=document.createElement('div');
+      d.className='cell '+cls(s);
+      d.textContent=label(s);
+      d.addEventListener('click',()=>{cells[i]=(cells[i]+1)%3;render();compute();});
+      grid.appendChild(d);
+    });
+  }
+  function compute(){
+    let obs=0, occ=0, omask=0, cmask=0;
+    let sum=0, sumsq=0;
+    const gmean=110;
+    for(let i=0;i<N;i++){
+      const flat=(cells[i]!==0);
+      const m=MEAN[cells[i]];
+      if(flat){ obs++; omask|=(1<<i);
+        if(m < (gmean>>1)){ occ++; cmask|=(1<<i); } }
+      sum+=m; sumsq+=m*m;
+    }
+    // cell_mean_variance, exactly as in the C: (n*sumsq - sum^2)/n^2 >> 6
+    let cmv=(N*sumsq - sum*sum); cmv=Math.floor(cmv/(N*N)); let cvar=cmv>>6; if(cvar>255)cvar=255;
+    document.getElementById('sb-obs').textContent=obs;
+    document.getElementById('sb-occ').textContent=occ;
+    document.getElementById('sb-cvar').textContent=cvar;
+    document.getElementById('sb-omask').textContent=bin(omask);
+    document.getElementById('sb-cmask').textContent=bin(cmask);
+    const v=document.getElementById('sb-verdict');
+    if(obs>=3 && cvar>=60){ v.textContent='OBSTRUCTION'; v.style.color=COLORS.OBSTRUCTION; }
+    else { v.textContent='CLEAN (on these 2 inputs)'; v.style.color=COLORS.CLEAN; }
+  }
+  function bin(m){let s='';for(let i=0;i<N;i++)s+=((m>>i)&1);return s;}
+  render(); compute();
+})();
+
+/* ============================================================
+   SECTION 7 — EMA convergence chart
+============================================================ */
+(function(){
+  const cv=document.getElementById('emaCanvas'), ctx=cv.getContext('2d');
+  let raw=[];
+  function rnd(a,b){return a+Math.random()*(b-a);}
+  function gen(){
+    raw=[];
+    for(let i=0;i<320;i++){
+      let base;
+      if(i<60) base=45; else if(i<210) base=185; else base=58;
+      raw.push(Math.max(0,Math.min(255,Math.round(base+rnd(-9,9)))));
+    }
+  }
+  function draw(){
+    const freeze=document.getElementById('emaFreeze').checked;
+    const W=cv.width,H=cv.height,pad=28;
+    ctx.clearRect(0,0,W,H);
+    // axes
+    ctx.strokeStyle='#2e3350'; ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(pad,H-pad);ctx.lineTo(W-6,H-pad);ctx.moveTo(pad,6);ctx.lineTo(pad,H-pad);ctx.stroke();
+    const xs=i=>pad+(i/(raw.length-1))*(W-pad-8);
+    const ys=v=>H-pad-(v/255)*(H-pad-10);
+    // event shading
+    ctx.fillStyle='rgba(240,87,75,.06)';
+    ctx.fillRect(xs(60),6,xs(210)-xs(60),H-pad-6);
+    ctx.fillStyle='#6b7690'; ctx.font='11px monospace';
+    ctx.fillText('degradation event',xs(64),18);
+    // raw
+    line(raw.map((v,i)=>[xs(i),ys(v)]),'#5c6585',1);
+    // fast & slow EMA (integer style)
+    let fe=0,se=0; const fast=[],slow=[];
+    for(let i=0;i<raw.length;i++){
+      fe = fe - (fe>>4) + raw[i];
+      const inEvent = (i>=60 && i<210);
+      if(!(freeze && inEvent)) se = se - (se>>8) + raw[i];
+      fast.push(fe>>4); slow.push(se>>8);
+    }
+    line(fast.map((v,i)=>[xs(i),ys(v)]),'#74b9ff',2);
+    line(slow.map((v,i)=>[xs(i),ys(v)]),'#f5844b',2);
+    function line(pts,col,w){ctx.strokeStyle=col;ctx.lineWidth=w;ctx.beginPath();
+      pts.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.stroke();}
+  }
+  document.getElementById('emaRegen').addEventListener('click',()=>{gen();draw();});
+  document.getElementById('emaFreeze').addEventListener('change',draw);
+  gen();draw();
+})();
+
+/* ============================================================
+   SECTION 7 — hysteresis timeline
+============================================================ */
+(function(){
+  const C='CLEAN',F='FOG',O='OBSTRUCTION';
+  // raw guesses with deliberate single-frame glitches
+  const seq=[C,C,C, F, C,C,        // lone fog glitch -> never alarms
+             F,F,F,F,F,            // 5 in a row -> FOG latches at the 5th
+             F,F,F, C, F,F,        // a clean flicker -> clear counter resets
+             O,O,O,O,O,            // switch to obstruction: immediate (already degraded)
+             C,C,C,C,C,C,C,C,C,C,C,C,C,C,C, // 15 clean -> clears
+             C,C];
+  const rawEl=document.getElementById('hysRaw'), repEl=document.getElementById('hysRep');
+  let i=0, hyst=C, confirm=0, clear=0, timer=null;
+  function colOf(c){return c===C?'#2a2f48':COLORS[c];}
+  function reset(){
+    i=0;hyst=C;confirm=0;clear=0;
+    rawEl.innerHTML='';repEl.innerHTML='';
+    seq.forEach(()=>{
+      const a=document.createElement('div');a.className='seg';a.style.flex='1';a.style.background='#161b27';rawEl.appendChild(a);
+      const b=document.createElement('div');b.className='seg';b.style.flex='1';b.style.background='#161b27';repEl.appendChild(b);
+    });
+    upd();
+  }
+  function step(){
+    if(i>=seq.length){stop();return;}
+    const raw=seq[i];
+    // state machine — exact port
+    if(hyst===C){
+      if(raw!==C){ confirm++; clear=0; if(confirm>=5){hyst=raw;confirm=0;} }
+      else confirm=0;
+    } else {
+      if(raw===C){ clear++; confirm=0; if(clear>=15){hyst=C;clear=0;} }
+      else { clear=0; hyst=raw; }
+    }
+    rawEl.children[i].style.background=colOf(raw);
+    repEl.children[i].style.background=colOf(hyst);
+    i++; upd();
+  }
+  function upd(){
+    document.getElementById('hysConfirm').textContent=confirm;
+    document.getElementById('hysClear').textContent=clear;
+  }
+  function play(){ if(timer)return; timer=setInterval(step,260); }
+  function stop(){ clearInterval(timer); timer=null; }
+  document.getElementById('hysPlay').addEventListener('click',()=>{ if(timer){stop();}else{ if(i>=seq.length)reset(); play(); } });
+  document.getElementById('hysReset').addEventListener('click',()=>{stop();reset();});
+  reset();
+})();
+
+/* ============================================================
+   SECTION 9 — equivalence stream + scan
+============================================================ */
+(function(){
+  const segs=[['CLEAN',70],['FOG',20],['FROST',20],['OBSTRUCTION',20],['DARK',15],['CLEAN',20]];
+  const total=165;
+  const stream=document.getElementById('eqStream'), gutter=document.getElementById('eqGutter');
+  const colOf=k=> k==='DARK'?'#3a4055':COLORS[k];
+  // stream segments
+  segs.forEach(([k,n])=>{
+    const d=document.createElement('div');d.className='seg';
+    d.style.flex=n; d.style.background=colOf(k);
+    stream.appendChild(d);
+  });
+  // per-frame gutter
+  for(let i=0;i<total;i++){const g=document.createElement('div');g.className='g';g.style.flex='1';gutter.appendChild(g);}
+  let scanning=false;
+  document.getElementById('eqRun').addEventListener('click',()=>{
+    if(scanning)return; scanning=true;
+    const st=document.getElementById('eqStatus');
+    [...gutter.children].forEach(g=>g.style.background='#2a2f48');
+    let i=0;
+    const t=setInterval(()=>{
+      if(i>=total){clearInterval(t);scanning=false;
+        st.textContent='✓ PASS — all 165 frames × 12 columns identical';
+        st.style.color=COLORS.CLEAN; return;}
+      gutter.children[i].style.background=COLORS.CLEAN;
+      st.textContent='comparing frame '+(i+1)+'/165 …  match ✓';
+      st.style.color='var(--muted)';
+      i++;
+    },14);
+  });
+})();
+</script>
+</body>
+</html>
