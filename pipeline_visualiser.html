@@ -378,9 +378,12 @@
   <section class="stage" id="sec-classify">
     <h2><span class="snum">5</span>Absolute-threshold decision tree · priority order</h2>
     <p class="note">Raw feature values are tested against fixed thresholds from <code>degradation.h</code> —
-      no baseline, no ratios. Rules run top-down; the <b>first match wins</b> and the rest are skipped.</p>
+      no baseline, no ratios. Rules run top-down; the <b>first match wins</b> and the rest are skipped.
+      The first three rules are the shipped <code>degradation.c</code> tree; the two
+      <b>OBSTRUCTION rescue</b> rules below them are the live-viewer override from <code>live.py</code>,
+      reached only when the core tree would return CLEAN.</p>
     <div id="rules"></div>
-    <div class="src-ref">↳ classify_absolute() — degradation.c:48-86 · thresholds — degradation.h:81-119</div>
+    <div class="src-ref">↳ classify_absolute() — degradation.c:48-86 · thresholds — degradation.h:81-119 · obstruction override — live.py ObstructionOverride</div>
   </section>
 
   <!-- ================= STAGE 6 : VERDICT ================= -->
@@ -419,7 +422,7 @@
 
 </main>
 
-<footer>faithful JS port of degradation.c — same integer arithmetic, same thresholds, same priority order</footer>
+<footer>faithful JS port of degradation.c — same integer arithmetic, same thresholds, same priority order · plus the two live.py OBSTRUCTION rescue rules</footer>
 
 <script>
 /*ENGINE-START*/
@@ -435,12 +438,9 @@ const STRIDE = 4, GRID_COLS = 4, GRID_ROWS = 3, GRID_CELLS = 12;
 const THUMB_W = 16, THUMB_H = 12, THUMB_PIXELS = 192;
 const HIST_BINS = 8;
 
-/* Fine grid for the dark-occlusion demo (EXPERIMENTAL — failed dataset validation;
-   kept only to demonstrate the broad-occlusion failure mode. NOT in degradation.c
-   or detector.py — the visualiser is otherwise a faithful port). */
-const FINE_COLS = 8, FINE_ROWS = 6, FINE_CELLS = 48;
-
-/* Thresholds — degradation.h:81-119 (+ experimental dark-occlusion demo) */
+/* Thresholds — degradation.h:81-119.
+   OCC_CELLS / CELLVAR_UNIFORM double as the live-viewer obstruction-override
+   gates (live.py) — see the classify() rescue rules below. */
 const THR = {
   LAP_FROST: 5, LAP_BLUR: 15,
   CONTRAST_LOW: 40,
@@ -448,8 +448,7 @@ const THR = {
   MEAN_BRIGHT: 60, MEAN_FLOOR: 40,
   CELLVAR_UNIFORM: 50, CELLVAR_LOCAL: 60,
   OCC_CELLS: 2, OBS_CELLS: 3,
-  CELL_LVAR: 8,
-  DARK_ABS: 40, DARK_OCC_CELLS: 4    /* demo: fine subcell mean<40 & flat; ≥4 → OBSTRUCTION */
+  CELL_LVAR: 8
 };
 
 const CLASS_NAMES = ["CLEAN", "FOG", "FROST", "OBSTRUCTION", "UNKNOWN"];
@@ -461,10 +460,6 @@ function newAcc() {
     cellSum:   new Uint32Array(GRID_CELLS),
     cellSumsq: new Uint32Array(GRID_CELLS),
     cellCount: new Uint32Array(GRID_CELLS),
-    /* fine grid (experimental dark-occlusion demo) */
-    fSum:   new Float64Array(FINE_CELLS),
-    fSumsq: new Float64Array(FINE_CELLS),
-    fCount: new Uint32Array(FINE_CELLS),
     lapSumsq: 0, lapCount: 0,
     hist: new Uint32Array(HIST_BINS),
     sum: 0, count: 0, min: 255, max: 0
@@ -498,12 +493,6 @@ function scanRow(gray, y, acc, out) {
     acc.cellSum[ci] += p;
     acc.cellSumsq[ci] += p * p;
     acc.cellCount[ci]++;
-
-    /* fine grid (experimental dark-occlusion demo) */
-    const fi = Math.floor(y * FINE_ROWS / H) * FINE_COLS + Math.floor(x * FINE_COLS / W);
-    acc.fSum[fi] += p;
-    acc.fSumsq[fi] += p * p;
-    acc.fCount[fi]++;
 
     if (out) out.push({ x, y, p, lap });
   }
@@ -614,24 +603,6 @@ function deriveFeatures(acc) {
     f.cell_mean_variance = cmVar > (255 << 6) ? 255 : (cmVar >> 6);
   }
 
-  /* Dark-occlusion on the fine grid (EXPERIMENTAL demo — failed validation).
-     Flat-AND-dark test at fine resolution; fires on the vignette / dark road too,
-     so it is a demo only and not part of degradation.c / detector.py. */
-  {
-    let darkOcc = 0;
-    for (let fi = 0; fi < FINE_CELLS; fi++) {
-      const cnt = acc.fCount[fi];
-      if (cnt === 0) continue;
-      const m = Math.floor(acc.fSum[fi] / cnt);
-      const varBig = Math.floor(acc.fSumsq[fi] / cnt) - m * m;
-      let lvar8;
-      if (varBig <= 0) lvar8 = 0;
-      else { const v = varBig >> 8; lvar8 = v > 255 ? 255 : v; }
-      if (lvar8 < THR.CELL_LVAR && m < THR.DARK_ABS) darkOcc++;
-    }
-    f.dark_occlusion_cells = darkOcc;
-  }
-
   return f;
 }
 
@@ -641,7 +612,7 @@ function deriveFeatures(acc) {
 function classify(f) {
   const lap = f.laplacian_var, ctr = f.global_contrast, spr = f.histogram_spread;
   const mean = f.global_mean, obs = f.obstruction_score, cvar = f.cell_mean_variance;
-  const docc = f.dark_occlusion_cells;
+  const occ = f.occlusion_score;
 
   const rules = [
     {
@@ -653,15 +624,6 @@ function classify(f) {
       ],
       conf: () => u8clamp((obs - THR.OBS_CELLS + 1) * 50 + (cvar - THR.CELLVAR_LOCAL) * 2),
       confExpr: () => `conf = (obs−${THR.OBS_CELLS}+1)×50 + (cvar−${THR.CELLVAR_LOCAL})×2 = (${obs}−${THR.OBS_CELLS}+1)×50 + (${cvar}−${THR.CELLVAR_LOCAL})×2`
-    },
-    {
-      name: "OBSTRUCTION · dark occlusion", cls: 3, color: "var(--c-obst)", proto: true,
-      desc: "EXPERIMENTAL · failed dataset validation (fires on the fisheye vignette / vehicle body / dark road too): enough fine 8×6 subcells are flat AND absolutely dark. Demo only — NOT in degradation.c",
-      conds: [
-        { c: "dark_occlusion_cells", op: "≥", thr: THR.DARK_OCC_CELLS, thrName: "THR_DARK_OCC_CELLS", val: docc, pass: docc >= THR.DARK_OCC_CELLS }
-      ],
-      conf: () => u8clamp(docc * 16),
-      confExpr: () => `conf = dark_occlusion_cells×16 = ${docc}×16`
     },
     {
       name: "FROST", cls: 2, color: "var(--c-frost)",
@@ -686,6 +648,26 @@ function classify(f) {
       ],
       conf: () => u8clamp((THR.CONTRAST_LOW - ctr) * 6),
       confExpr: () => `conf = (${THR.CONTRAST_LOW}−ctr)×6 = (${THR.CONTRAST_LOW}−${ctr})×6`
+    },
+    {
+      name: "OBSTRUCTION · soft block", cls: 3, color: "var(--c-obst)", override: true,
+      desc: "LIVE-VIEWER OVERRIDE (live.py) — not in degradation.c. Rescues a would-be-CLEAN frame: flat cells with cell_mean_variance in the 50–59 dead zone the shipped ≥60 gate misses (soft smear / haze film). Reached only after the core rules above reject.",
+      conds: [
+        { c: "obstruction_score", op: "≥", thr: THR.OBS_CELLS, thrName: "OBS_SOFT_MIN_CELLS", val: obs, pass: obs >= THR.OBS_CELLS },
+        { c: "cell_mean_variance", op: "≥", thr: THR.CELLVAR_UNIFORM, thrName: "OBS_SOFT_MIN_CVAR", val: cvar, pass: cvar >= THR.CELLVAR_UNIFORM }
+      ],
+      conf: () => u8clamp((obs - THR.OBS_CELLS + 1) * 50),
+      confExpr: () => `conf = (obs−${THR.OBS_CELLS}+1)×50 = (${obs}−${THR.OBS_CELLS}+1)×50`
+    },
+    {
+      name: "OBSTRUCTION · dark block", cls: 3, color: "var(--c-obst)", override: true,
+      desc: "LIVE-VIEWER OVERRIDE (live.py) — not in degradation.c. Rescues a would-be-CLEAN frame: a brightness-relative dark flat blob (occlusion_score) while the frame is blurry, so an out-of-focus block on a dim lens is caught even when cvar stays low. The blur gate rejects dark-but-sharp scene content.",
+      conds: [
+        { c: "occlusion_score", op: "≥", thr: THR.OCC_CELLS, thrName: "THR_OCC_CELLS", val: occ, pass: occ >= THR.OCC_CELLS },
+        { c: "laplacian_var", op: "<", thr: THR.LAP_BLUR, thrName: "THR_LAP_BLUR", val: lap, pass: lap < THR.LAP_BLUR }
+      ],
+      conf: () => u8clamp((obs - THR.OBS_CELLS + 1) * 50),
+      confExpr: () => `conf = (obs−${THR.OBS_CELLS}+1)×50 = (${obs}−${THR.OBS_CELLS}+1)×50`
     },
     {
       name: "CLEAN", cls: 0, color: "var(--c-clean)",
@@ -901,14 +883,10 @@ const FEATURE_DEFS = [
     formula: f => `cells with lvar8 &lt; ${THR.CELL_LVAR} → <b>${f.obstruction_score}</b> of 12`,
     max: 12, ticks: [{ v: THR.OBS_CELLS, cls: "t2" }],
     tickLeg: `<span class="r">▎3 obstruction threshold</span>` },
-  { key: "occlusion_score", desc: "Flat cells that are also darker than half the global mean — the dirt/mud signature (diagnostic only).",
+  { key: "occlusion_score", desc: "Flat cells also darker than half the global mean — the dirt/mud signature. In degradation.c this is diagnostic only; the live viewer (live.py) uses it as the dark-block rescue trigger: occ ≥ 2 while the frame is blurry → OBSTRUCTION.",
     formula: f => `flat AND mean &lt; ${state.pipe.features.global_mean >> 1} (global_mean≫1) → <b>${f.occlusion_score}</b> of 12`,
-    max: 12, ticks: [{ v: THR.OCC_CELLS, cls: "" }],
-    tickLeg: `<span class="w">▎2 diagnostic ref</span>` },
-  { key: "dark_occlusion_cells", proto: true, desc: "EXPERIMENTAL · failed dataset validation: fine 8×6 subcells that are flat AND absolutely dark (&lt;40). Catches broad soft-edged mud, but also the fisheye vignette / vehicle body / dark road (≈22% false positives on clean frames) — demo only, not in degradation.c.",
-    formula: f => `flat AND mean &lt; ${THR.DARK_ABS} on an 8×6 grid → <b>${f.dark_occlusion_cells}</b> of 48`,
-    max: 48, ticks: [{ v: THR.DARK_OCC_CELLS, cls: "t2" }],
-    tickLeg: `<span class="r">▎4 → OBSTRUCTION</span>` },
+    max: 12, ticks: [{ v: THR.OCC_CELLS, cls: "t2" }],
+    tickLeg: `<span class="r">▎2 dark-block rescue (live.py)</span>` },
   { key: "temporal_mad", temporal: true, desc: "Fast-EMA of inter-frame thumbnail MAD. Needs video — first frame compares against the zero-initialised thumbnail.",
     formula: f => `mad_fast after 1 frame = raw_mad = <b>${f.temporal_mad}</b>`, max: 255, ticks: [], tickLeg: "single image — not meaningful" },
   { key: "temporal_mad_var", temporal: true, desc: "Instantaneous deviation of raw MAD from its fast EMA — motion variability. Needs video.",
@@ -975,7 +953,7 @@ function buildRuleCards(rules) {
 function renderVerdict() {
   const { features: f, result: r, acc } = state.pipe;
   $("verdict-wrap").style.display = "block";
-  const col = CLASS_COLORS[r.clsName];
+  const col = r.firedRule ? r.firedRule.color : (CLASS_COLORS[r.clsName] || "var(--tx)");
   $("vClass").textContent = `${r.clsName} (${r.cls})`;
   $("vClass").style.color = col;
   $("verdictBadge").style.borderColor = col;
@@ -1009,12 +987,16 @@ function renderVerdict() {
     cg.appendChild(box);
   }
 
+  const isOverride = r.firedRule && r.firedRule.override;
   $("hystNote").innerHTML =
     `<b>Hysteresis (live video only):</b> this is <code>raw_classification</code> — what this single frame says on its own.
      On a stream, a non-CLEAN class must persist for <b>${5}</b> consecutive frames before
      <code>result.classification</code> reports it, and <b>${15}</b> consecutive CLEAN frames to clear
      (degradation.c:446-477). ${r.clsName !== "CLEAN"
        ? `At 10 Hz this ${r.clsName} verdict would be confirmed after 0.5 s.` : ""}
+     ${isOverride
+       ? `<br><b>Live-viewer override:</b> the two OBSTRUCTION rescue rules live in <code>live.py</code>, not <code>degradation.c</code>. They fire only when the core detector would return CLEAN, and carry their own matching 5-frame-enter / 15-frame-clear debounce.`
+       : ""}
      † temporal metrics need a previous frame; UNKNOWN (enum 4) is reserved and never emitted by the absolute classifier.`;
 }
 

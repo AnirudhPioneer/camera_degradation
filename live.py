@@ -20,9 +20,10 @@ try:
         DegradationState, degradation_update,
         CLASS_NAMES, CLASS_COLORS,
         DEGR_WARMUP_FRAMES, DEGR_GRID_COLS, DEGR_GRID_ROWS, DEGR_GRID_CELLS,
+        DEGR_ENTER_FRAMES, DEGR_CLEAR_FRAMES,
         THR_LAP_BLUR, THR_CONTRAST_LOW, THR_SPREAD_FOG, THR_SPREAD_FROST,
         THR_MEAN_BRIGHT, THR_CELLVAR_UNIFORM, THR_CELLVAR_LOCAL,
-        THR_OBS_CELLS,
+        THR_OBS_CELLS, THR_OCC_CELLS,
     )
 except ImportError:
     print("ERROR: detector.py not found. Run this script from the project directory.")
@@ -43,6 +44,113 @@ CLASS_BGR = {
     "OBSTRUCTION": ( 60,  76, 231),   # red  — covers dark blobs and bright blobs
     "UNKNOWN":     (182,  89, 155),   # purple
 }
+
+
+# ── Obstruction rescue (LIVE-VIEWER ONLY) ─────────────────────────────────────
+# The C-synced detector (detector.py / degradation.c) calls OBSTRUCTION only when
+#     obstruction_score >= THR_OBS_CELLS (3)  AND  cell_mean_variance >= 60.
+# That single cvar gate has two blind spots this rescue closes — both purely in
+# the live viewer, so detector.py and degradation.c stay byte-for-byte unchanged
+# and equiv_check.py still passes.
+#
+# Path A — cvar dead zone (50-59):
+#   A soft smear / haze film trips many flat cells but leaves cvar a few points
+#   under 60.  We lower the effective gate to OBS_SOFT_MIN_CVAR (50).  cvar >= 50
+#   still excludes genuinely uniform fog / frost / blank-sky (those sit below 50).
+#
+# Path B — dark blob in a DIM scene, GATED ON BLUR:
+#   cvar measures ABSOLUTE brightness spread, so a dark obstruction over a dim
+#   scene (everything ~60) yields low cvar (e.g. 20) and slips path A entirely,
+#   even though the blob is 9x darker than its surroundings in RELATIVE terms.
+#   occlusion_score catches it: it counts flat cells darker than HALF the frame's
+#   own mean — brightness-relative, so it survives a dark scene.  BUT on its own
+#   occlusion_score fires on ANY dark smooth surface (a floor, a mat, a dark wall)
+#   — the exact ~22% false-positive failure logged in detector.py's history.
+#   The fix is a sharpness gate: a physical block sits ON the lens and is out of
+#   focus, so it kills sharpness (lap << THR_LAP_BLUR).  A dark region in a SHARP
+#   frame is in-focus scene content, not an obstruction.  So path B requires both
+#   occ >= THR_OCC_CELLS AND the frame to be blurry.
+#
+# Tradeoff: both paths are still more sensitive than the shipped C rule.  Path A
+# can fire on a clean scene with a few flat regions at cvar 50-59.  Path B, even
+# gated on blur, can fire on a scene that is BOTH genuinely blurry (defocus,
+# motion) AND has a dark flat region — but a persistently blurry lens is itself a
+# degradation, so that is a defensible call.  Watch the "sharpness" and "dark
+# cells" readouts; the durable fix for dark obstructions is baseline mode
+# (lap collapsing vs the clean-scene EMA), which needs video and is not built.
+OBS_SOFT_MIN_CELLS = THR_OBS_CELLS        # 3 — the detector's own OBSTRUCTION floor
+OBS_SOFT_MIN_CVAR  = THR_CELLVAR_UNIFORM  # 50 — dead-zone floor; below this = fog/frost
+
+
+class ObstructionOverride:
+    """Debounced obstruction rescue → OBSTRUCTION override for the live display.
+
+    Mirrors the detector's own 5-frame-enter / 15-frame-clear hysteresis so the
+    override does not flicker at the boundary.  Counts detector *calls* (one per
+    DETECTION_STRIDE frames), which is exactly how the detector counts internally.
+    """
+    def __init__(self):
+        self.active  = False
+        self.confirm = 0
+        self.clear   = 0
+
+    def update(self, result):
+        """Advance the debounce from this frame's features; return True if the
+        override is currently active."""
+        feat = result.get("features", {})
+        obs  = feat.get("obstruction_score", 0)
+        occ  = feat.get("occlusion_score", 0)
+        cvar = feat.get("cell_mean_variance", 0)
+        lap  = feat.get("laplacian_var", 255)   # default sharp → path B off if absent
+        is_clean = result.get("raw_class_name") == "CLEAN"
+
+        # Path A — flat cells + cvar in the 50-59 dead zone.
+        soft_deadzone = (obs >= OBS_SOFT_MIN_CELLS and cvar >= OBS_SOFT_MIN_CVAR)
+
+        # Path B — dark flat blob (brightness-relative) AND the frame is blurry.
+        # The blur gate rejects dark-but-sharp scene content (floors, mats, dark
+        # walls in focus); a real on-lens block is out of focus and kills lap.
+        dark_blob = (occ >= THR_OCC_CELLS and lap < THR_LAP_BLUR)
+
+        # Only rescue frames the detector itself left as CLEAN.
+        candidate = is_clean and (soft_deadzone or dark_blob)
+
+        if not self.active:
+            if candidate:
+                self.confirm += 1
+                self.clear    = 0
+                if self.confirm >= DEGR_ENTER_FRAMES:
+                    self.active  = True
+                    self.confirm = 0
+            else:
+                self.confirm = 0
+        else:
+            if not candidate:
+                self.clear   += 1
+                self.confirm  = 0
+                if self.clear >= DEGR_CLEAR_FRAMES:
+                    self.active = False
+                    self.clear  = 0
+            else:
+                self.clear = 0
+
+        return self.active
+
+    def reset(self):
+        self.active = self.confirm = self.clear = 0
+
+
+def apply_obstruction_override(result, override):
+    """Run the override state machine and, if active, patch a CLEAN result to
+    OBSTRUCTION for display.  Any non-CLEAN detector verdict is left untouched —
+    the real detector always wins when it has an opinion."""
+    active = override.update(result)
+    if active and result.get("class_name") == "CLEAN":
+        obs = result["features"].get("obstruction_score", 0)
+        result["class_name"]  = "OBSTRUCTION"
+        result["confidence"]  = min(255, (obs - THR_OBS_CELLS + 1) * 50)
+        result["overridden"]  = True
+    return result
 
 
 # ── Drawing helpers ───────────────────────────────────────────────────────────
@@ -173,6 +281,8 @@ def draw_dashboard(panel, result, frame_no):
     _text(panel, cls,  8, y, 0.72, bgr, 2)
     y += 26
     conf_txt = f"raw:{raw}  conf:{conf}"
+    if result.get("overridden"):
+        conf_txt += "  [soft block]"
     if wu:
         done = feat.get("_frame_count", 0)
         pct  = min(1.0, done / DEGR_WARMUP_FRAMES)
@@ -197,6 +307,7 @@ def draw_dashboard(panel, result, frame_no):
         ("cellvar/unif","cell_mean_variance",  THR_CELLVAR_UNIFORM,False,      80),
         ("cellvar/loc", "cell_mean_variance",  THR_CELLVAR_LOCAL,  False,      80),
         ("blocked cells","obstruction_score",  THR_OBS_CELLS,      False,      12),
+        ("dark cells",  "occlusion_score",     THR_OCC_CELLS,      False,      12),
     ]
 
     for label, key, thr, bad_below, scale in rows:
@@ -221,6 +332,12 @@ def draw_dashboard(panel, result, frame_no):
     _text(panel, "flat + bright (obstruction)", 22, y, 0.34, (180, 180, 180))
     y += 14
     _text(panel, "both types -> OBSTRUCTION",   8, y, 0.34, (140, 140, 140))
+    y += 14
+    _text(panel, f"soft: >={OBS_SOFT_MIN_CELLS} flat & cvar {OBS_SOFT_MIN_CVAR}-{THR_CELLVAR_LOCAL - 1} -> OBSTRUCTION",
+                                                 8, y, 0.34, (140, 140, 140))
+    y += 14
+    _text(panel, f"dark: >={THR_OCC_CELLS} dark flat + blurry -> OBSTRUCTION",
+                                                 8, y, 0.34, (140, 140, 140))
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -249,6 +366,7 @@ def main():
     print("Controls: [r] reset baseline   [q] quit")
 
     state    = DegradationState()
+    override = ObstructionOverride()
     result   = {
         "class_name":     "CLEAN",
         "raw_class_name": "CLEAN",
@@ -267,6 +385,7 @@ def main():
             if isinstance(source, str):          # loop video files
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 state  = DegradationState()
+                override.reset()
                 ok, frame = cap.read()
                 if not ok:
                     break
@@ -278,6 +397,10 @@ def main():
             gray   = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             result = degradation_update(state, gray)
             result["features"]["_frame_count"] = state.frame_count
+            # Live-viewer-only: rescue soft smears that land in the cvar dead zone.
+            # Alarms are suppressed during warmup, so the override waits too.
+            if not result.get("warmup"):
+                apply_obstruction_override(result, override)
 
         # ── Grid overlay ──────────────────────────────────────────────────
         # Always drawn — shows cell means + any flagged cells
@@ -301,6 +424,7 @@ def main():
             break
         elif key == ord('r'):
             state    = DegradationState()
+            override.reset()
             frame_no = 0
             print(f"[frame {frame_no}] Baseline reset — warmup restarted.")
 
